@@ -8,10 +8,12 @@ This folder contains reusable classroom materials for **Class 7 — AI Brand & V
 - demo inputs and demo outputs (EN + ZH)
 - design-system examples (EN + ZH)
 - website brand integration checklists (EN + ZH)
+- brand image generation prompt template
+- brand image generation review checklist
 - test checklists (EN + ZH)
 - implementation plan
 - presentation-outline and teacher-script notes
-- a repo-local copy of the Class 7 teaching skill under `brand-visual-system/`
+- repo-local copies of Class 7 teaching skills under `brand-visual-system/` and `class7-brand-image-generation/`
 
 ## Purpose
 

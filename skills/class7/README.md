@@ -10,6 +10,7 @@ These skills define repeatable workflows for:
 - forcing one selected winner
 - building prompt packs for logo, hero, social, and website assets
 - generating a lightweight website-ready design system
+- generating review-first image assets with Codex or a fal.ai-backed generator
 - implementing or extending the Class 7 student/admin website experience
 
 These are creative-direction workflow assets, not final approved branding.
@@ -20,6 +21,7 @@ These are creative-direction workflow assets, not final approved branding.
 skills/class7/
   README.md
   brand-visual-system/
+  class7-brand-image-generation/
   class7-brand-studio-implementation/
 ```
 
@@ -27,6 +29,9 @@ skills/class7/
 
 ### `brand-visual-system`
 Reusable brand workflow for turning a business idea into one selected visual direction, prompt pack, design system, and website application plan.
+
+### `class7-brand-image-generation`
+Reusable workflow for turning one selected Class 7 brand direction into review-first image assets using Codex or a fal.ai-backed generator, with prompt structure, QA, and handoff guidance.
 
 ### `class7-brand-studio-implementation`
 Implementation workflow for building or extending the Class 7 Brand Studio UI, docs, static tests, and frontend behavior on Jian's AI Solo Company class site.
