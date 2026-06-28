@@ -143,7 +143,12 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "name": "student-lead-followup",
             "template": Path("class4/student-lead-followup/SKILL.md"),
             "description": "Student local copy of the Class 4 lead follow-up skill",
-        }
+        },
+        "class8/keyword-research-skill": {
+            "name": "keyword-research-skill",
+            "template": Path("class8/keyword-research-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 keyword research skill",
+        },
     }
     admin_email = "jian.lin@easiio.com"
     admin_password = ""
@@ -860,7 +865,64 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         score = max(1, min(score, 5))
         return score, "; ".join(reasons) if reasons else "Need, budget, and timeline need more clarification."
 
-    def _render_student_skill_test_output(self, skill_text: str, sample_input: str) -> dict:
+    @staticmethod
+    def _render_class8_student_skill_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        offer = details.get("offer") or details.get("service") or "Unknown"
+        audience = details.get("audience") or "Unknown"
+        region = details.get("region") or "Unknown"
+        topic = details.get("topic") or offer
+        seeds_raw = details.get("seed_keywords") or details.get("keywords") or details.get("seed keywords") or ""
+        seed_keywords = [item.strip() for item in str(seeds_raw).split(",") if item.strip()]
+        if not seed_keywords:
+            seed_keywords = [
+                item
+                for item in [topic, f"{offer} {region}".strip(), f"{offer} for {audience}".strip()]
+                if item and item != "Unknown"
+            ][:3]
+        primary_keyword = seed_keywords[0] if seed_keywords else f"{topic} {region}".strip()
+        supporting_keywords = seed_keywords[1:] or [
+            f"{topic} checklist",
+            f"{offer} pricing",
+            f"{business} {offer}".strip(),
+        ]
+        output = f"""## Keyword research brief
+- Business: {business}
+- Offer: {offer}
+- Audience: {audience}
+- Region: {region}
+- Topic: {topic}
+
+## Seed keywords
+{chr(10).join(f'- {item}' for item in seed_keywords)}
+
+## Search intent hypothesis
+- Primary keyword: {primary_keyword}
+- Intent: Use a {style['tone']} tone for buyers researching {offer} in {region}.
+
+## Suggested content angle
+- Build a practical Class 8 brief around {primary_keyword}.
+- Supporting keywords: {', '.join(supporting_keywords)}
+- CTA: Invite the reader to request the next step or review the offer.
+
+## Next action
+Run the keyword research section first, then turn the winning angle into the full SEO brief packet.
+"""
+        checklist = [
+            {"label": "Keyword research brief section present", "passed": "## Keyword research brief" in output},
+            {"label": "Seed keywords section present", "passed": "## Seed keywords" in output},
+            {"label": "Search intent hypothesis present", "passed": "## Search intent hypothesis" in output},
+            {"label": "Suggested content angle present", "passed": "## Suggested content angle" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+            {"label": "At least one seed keyword is available", "passed": bool(seed_keywords)},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    def _render_student_skill_test_output(self, skill_id: str, skill_text: str, sample_input: str) -> dict:
+        if skill_id == "class8/keyword-research-skill":
+            return self._render_class8_student_skill_test_output(skill_text, sample_input)
         lead = self._parse_student_lead_input(sample_input)
         style = self._infer_student_skill_style(skill_text)
         score, score_reason = self._score_student_lead(lead)
@@ -936,7 +998,7 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._send_json(400, {"ok": False, "error": "sample_input_required"})
             return
         skill_text = path.read_text(encoding="utf-8")
-        result = self._render_student_skill_test_output(skill_text, sample_input)
+        result = self._render_student_skill_test_output(skill_id, skill_text, sample_input)
         self._send_json(200, {"ok": True, "skill": self._student_skill_summary(user, skill_id, path), "result": result})
 
     def _handle_student_skill_diff(self) -> None:

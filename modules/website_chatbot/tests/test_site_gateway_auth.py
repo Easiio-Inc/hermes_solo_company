@@ -12,6 +12,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 GATEWAY_PATH = Path(__file__).resolve().parents[1] / 'backend' / 'site_gateway.py'
+REPO_ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('site_gateway', GATEWAY_PATH)
 site_gateway = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -30,6 +31,9 @@ class GatewayAuthTests(unittest.TestCase):
         site_gateway.GatewayHandler.api_base = 'http://127.0.0.1:9'
         site_gateway.GatewayHandler.auth_db_path = self.db_path
         site_gateway.GatewayHandler.upload_dir = self.upload_dir
+        site_gateway.GatewayHandler.skills_root = REPO_ROOT / 'skills'
+        site_gateway.GatewayHandler.site_skill_docs_root = REPO_ROOT / 'skills'
+        site_gateway.GatewayHandler.student_skills_root = self.root / 'student_skills'
         site_gateway.GatewayHandler.admin_email = 'jian.lin@easiio.com'
         site_gateway.GatewayHandler.admin_password = 'test-password-123'
         site_gateway.initialize_auth_backend(self.db_path, self.upload_dir, 'jian.lin@easiio.com', 'test-password-123')
@@ -74,6 +78,44 @@ class GatewayAuthTests(unittest.TestCase):
     def test_invalid_login_is_rejected(self):
         status, _headers, data = self.request('POST', '/auth/login', {'email': 'jian.lin@easiio.com', 'password': 'wrong'})
         self.assertEqual(status, 401, data)
+
+    def test_student_skills_list_includes_class4_and_class8_templates(self):
+        cookie = self.login_cookie()
+        status, _headers, data = self.request('GET', '/api/student/skills', headers={'Cookie': cookie})
+        self.assertEqual(status, 200, data)
+        payload = json.loads(data)
+        self.assertTrue(payload['ok'])
+        skill_ids = [item['skill_id'] for item in payload['skills']]
+        self.assertIn('class4/student-lead-followup', skill_ids)
+        self.assertIn('class8/keyword-research-skill', skill_ids)
+
+    def test_class8_student_skill_test_runner_returns_keyword_research_sections(self):
+        cookie = self.login_cookie()
+        sample_input = '\n'.join([
+            'Business: solo founder website studio',
+            'Offer: AI website launch service',
+            'Audience: solo founders',
+            'Region: Bay Area',
+            'Topic: launch an AI-ready website quickly',
+            'Seed_Keywords: ai website launch, solo founder website, launch checklist',
+            'Source: student skill studio',
+        ])
+        status, _headers, data = self.request(
+            'POST',
+            '/api/student/skills/test',
+            {'skill_id': 'class8/keyword-research-skill', 'sample_input': sample_input},
+            headers={'Cookie': cookie},
+        )
+        self.assertEqual(status, 200, data)
+        payload = json.loads(data)
+        self.assertTrue(payload['ok'])
+        result = payload['result']
+        self.assertIn('## Keyword research brief', result['output'])
+        self.assertIn('## Seed keywords', result['output'])
+        self.assertIn('## Search intent hypothesis', result['output'])
+        self.assertIn('## Suggested content angle', result['output'])
+        self.assertIn('## Next action', result['output'])
+        self.assertTrue(all(item['passed'] for item in result['checklist']))
 
     def test_upload_requires_login_and_authenticated_admin_can_upload_and_list_download(self):
         boundary = '----HermesBoundary'
