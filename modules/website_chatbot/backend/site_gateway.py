@@ -149,6 +149,21 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "template": Path("class8/keyword-research-skill/SKILL.md"),
             "description": "Student local copy of the Class 8 keyword research skill",
         },
+        "class8/seo-audit-skill": {
+            "name": "seo-audit-skill",
+            "template": Path("class8/seo-audit-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO audit skill",
+        },
+        "class8/seo-brief-skill": {
+            "name": "seo-brief-skill",
+            "template": Path("class8/seo-brief-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO brief skill",
+        },
+        "class8/seo-article-writer-skill": {
+            "name": "seo-article-writer-skill",
+            "template": Path("class8/seo-article-writer-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO article writer skill",
+        },
     }
     admin_email = "jian.lin@easiio.com"
     admin_password = ""
@@ -866,7 +881,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         return score, "; ".join(reasons) if reasons else "Need, budget, and timeline need more clarification."
 
     @staticmethod
-    def _render_class8_student_skill_test_output(skill_text: str, sample_input: str) -> dict:
+    def _render_class8_keyword_research_test_output(skill_text: str, sample_input: str) -> dict:
         details = GatewayHandler._parse_student_lead_input(sample_input)
         style = GatewayHandler._infer_student_skill_style(skill_text)
         business = details.get("business") or details.get("company") or "Unknown"
@@ -920,9 +935,141 @@ Run the keyword research section first, then turn the winning angle into the ful
         ]
         return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
 
+    @staticmethod
+    def _render_class8_audit_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        site_url = details.get("site_url") or details.get("url") or "https://example.com"
+        page_type = details.get("page_type") or "service page"
+        topic = details.get("topic") or details.get("offer") or "AI website launch support"
+        output = f"""## Audit summary
+- URL: {site_url}
+- Page type: {page_type}
+- Topic: {topic}
+- Review mode: classroom-safe single-page SEO audit
+
+## Strengths
+- The page topic is explicit enough to support a focused SEO improvement pass.
+- The audit tone should stay {style['tone']} and review-safe for students.
+
+## Issues found
+- Missing or weak meta description
+- Heading structure needs a clearer H1/H2 hierarchy
+- Internal links should point to the most relevant conversion pages
+- Image alt text and schema opportunities need review
+
+## Recommended fixes
+- Rewrite the title and meta description around one stronger search intent.
+- Tighten the H1 and add supporting H2 sections.
+- Add one CTA, one FAQ block, and one schema recommendation.
+
+## Next action
+Save this audit first, then turn the top issue into a Class 8 SEO brief.
+"""
+        checklist = [
+            {"label": "Audit summary section present", "passed": "## Audit summary" in output},
+            {"label": "Strengths section present", "passed": "## Strengths" in output},
+            {"label": "Issues found section present", "passed": "## Issues found" in output},
+            {"label": "Recommended fixes section present", "passed": "## Recommended fixes" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    @staticmethod
+    def _render_class8_brief_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        topic = details.get("topic") or details.get("offer") or "AI website launch"
+        primary_keyword = details.get("primary_keyword") or details.get("seed_keywords") or topic
+        output = f"""## Brief objective
+- Business: {business}
+- Topic: {topic}
+- Primary keyword: {primary_keyword}
+- Tone: {style['tone']}
+
+## Selected brief
+- SEO title: {topic.title()} | {business}
+- Meta description: Practical guidance for buyers researching {topic}.
+- Search intent: Commercial investigative
+- CTA: Book a planning call
+
+## Outline
+- Problem and buyer context
+- Solution options and proof
+- FAQ
+- Conversion CTA
+
+## Internal links
+- Pricing or service page
+- Case study or proof page
+- Contact / booking page
+
+## Next action
+Use this brief to generate one full Class 8 article draft before any WordPress publishing step.
+"""
+        checklist = [
+            {"label": "Brief objective section present", "passed": "## Brief objective" in output},
+            {"label": "Selected brief section present", "passed": "## Selected brief" in output},
+            {"label": "Outline section present", "passed": "## Outline" in output},
+            {"label": "Internal links section present", "passed": "## Internal links" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    @staticmethod
+    def _render_class8_article_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        topic = details.get("topic") or details.get("offer") or "AI website launch"
+        output = f"""## Article brief recap
+- Business: {business}
+- Topic: {topic}
+- Writing mode: review-safe Class 8 article draft
+
+## Full article draft
+# {topic.title()}
+
+## Introduction
+This draft uses a {style['tone']} tone and stays practical for real buyers.
+
+## Main section
+Explain the problem, the buyer questions, the recommended approach, and the CTA.
+
+## FAQ
+- What should a buyer do first?
+- How should they evaluate the offer?
+
+## CTA
+Invite the reader to book the next planning step.
+
+## On-page SEO checklist
+- Primary keyword appears in the title and introduction
+- CTA is visible
+- FAQ section exists
+- Draft is ready for human review
+
+## Next action
+Review the article, then convert it into a WordPress-safe draft handoff.
+"""
+        checklist = [
+            {"label": "Article brief recap section present", "passed": "## Article brief recap" in output},
+            {"label": "Full article draft section present", "passed": "## Full article draft" in output},
+            {"label": "On-page SEO checklist section present", "passed": "## On-page SEO checklist" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
     def _render_student_skill_test_output(self, skill_id: str, skill_text: str, sample_input: str) -> dict:
         if skill_id == "class8/keyword-research-skill":
-            return self._render_class8_student_skill_test_output(skill_text, sample_input)
+            return self._render_class8_keyword_research_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-audit-skill":
+            return self._render_class8_audit_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-brief-skill":
+            return self._render_class8_brief_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-article-writer-skill":
+            return self._render_class8_article_test_output(skill_text, sample_input)
         lead = self._parse_student_lead_input(sample_input)
         style = self._infer_student_skill_style(skill_text)
         score, score_reason = self._score_student_lead(lead)

@@ -36,6 +36,9 @@ Install only the reusable skills, for example:
 ```bash
 scripts/install_easiio_modules.sh --module website_chatbot --skill class4/student-lead-followup
 scripts/install_easiio_modules.sh --skill class8/keyword-research-skill
+scripts/install_easiio_modules.sh --skill class8/seo-audit-skill
+scripts/install_easiio_modules.sh --skill class8/seo-brief-skill
+scripts/install_easiio_modules.sh --skill class8/seo-article-writer-skill
 scripts/install_easiio_modules.sh --skill class7/brand-visual-system
 ```
 

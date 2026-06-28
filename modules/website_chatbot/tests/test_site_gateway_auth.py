@@ -88,6 +88,9 @@ class GatewayAuthTests(unittest.TestCase):
         skill_ids = [item['skill_id'] for item in payload['skills']]
         self.assertIn('class4/student-lead-followup', skill_ids)
         self.assertIn('class8/keyword-research-skill', skill_ids)
+        self.assertIn('class8/seo-audit-skill', skill_ids)
+        self.assertIn('class8/seo-brief-skill', skill_ids)
+        self.assertIn('class8/seo-article-writer-skill', skill_ids)
 
     def test_class8_student_skill_test_runner_returns_keyword_research_sections(self):
         cookie = self.login_cookie()
@@ -115,6 +118,70 @@ class GatewayAuthTests(unittest.TestCase):
         self.assertIn('## Search intent hypothesis', result['output'])
         self.assertIn('## Suggested content angle', result['output'])
         self.assertIn('## Next action', result['output'])
+        self.assertTrue(all(item['passed'] for item in result['checklist']))
+
+    def test_class8_student_skill_test_runner_returns_audit_sections(self):
+        cookie = self.login_cookie()
+        sample_input = '\n'.join([
+            'Site_URL: https://example.com/services/ai-launch',
+            'Page_Type: service page',
+            'Business: solo founder website studio',
+            'Offer: AI website launch service',
+            'Topic: improve service page SEO',
+        ])
+        status, _headers, data = self.request(
+            'POST',
+            '/api/student/skills/test',
+            {'skill_id': 'class8/seo-audit-skill', 'sample_input': sample_input},
+            headers={'Cookie': cookie},
+        )
+        self.assertEqual(status, 200, data)
+        result = json.loads(data)['result']
+        self.assertIn('## Audit summary', result['output'])
+        self.assertIn('## Issues found', result['output'])
+        self.assertIn('## Recommended fixes', result['output'])
+        self.assertTrue(all(item['passed'] for item in result['checklist']))
+
+    def test_class8_student_skill_test_runner_returns_brief_sections(self):
+        cookie = self.login_cookie()
+        sample_input = '\n'.join([
+            'Business: solo founder website studio',
+            'Topic: ai-ready website launch checklist',
+            'Primary_Keyword: ai-ready website launch checklist',
+            'Offer: AI website launch service',
+        ])
+        status, _headers, data = self.request(
+            'POST',
+            '/api/student/skills/test',
+            {'skill_id': 'class8/seo-brief-skill', 'sample_input': sample_input},
+            headers={'Cookie': cookie},
+        )
+        self.assertEqual(status, 200, data)
+        result = json.loads(data)['result']
+        self.assertIn('## Brief objective', result['output'])
+        self.assertIn('## Selected brief', result['output'])
+        self.assertIn('## Internal links', result['output'])
+        self.assertTrue(all(item['passed'] for item in result['checklist']))
+
+    def test_class8_student_skill_test_runner_returns_article_sections(self):
+        cookie = self.login_cookie()
+        sample_input = '\n'.join([
+            'Business: solo founder website studio',
+            'Topic: ai-ready website launch checklist',
+            'Primary_Keyword: ai-ready website launch checklist',
+            'CTA: Book a launch planning call',
+        ])
+        status, _headers, data = self.request(
+            'POST',
+            '/api/student/skills/test',
+            {'skill_id': 'class8/seo-article-writer-skill', 'sample_input': sample_input},
+            headers={'Cookie': cookie},
+        )
+        self.assertEqual(status, 200, data)
+        result = json.loads(data)['result']
+        self.assertIn('## Article brief recap', result['output'])
+        self.assertIn('## Full article draft', result['output'])
+        self.assertIn('## On-page SEO checklist', result['output'])
         self.assertTrue(all(item['passed'] for item in result['checklist']))
 
     def test_upload_requires_login_and_authenticated_admin_can_upload_and_list_download(self):
