@@ -191,7 +191,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
 
     def _send_json(self, status: int, payload: dict, headers: dict[str, str] | None = None) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -210,11 +210,44 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
-    def _current_user(self) -> dict | None:
+    def _authorization_token(self) -> str:
+        header = self.headers.get("Authorization", "").strip()
+        if header.lower().startswith("bearer "):
+            return header[7:].strip()
+        return ""
+
+    def _current_session_token(self) -> str | None:
+        auth_token = self._authorization_token()
+        if auth_token:
+            return auth_token
         cookie_header = self.headers.get("Cookie", "")
         cookies = http.cookies.SimpleCookie(cookie_header)
         morsel = cookies.get(SESSION_COOKIE)
-        if not morsel:
+        if morsel and morsel.value:
+            return morsel.value
+        return None
+
+    def _session_payload(self, user_row: sqlite3.Row, *, include_token: bool = False) -> tuple[dict, str]:
+        token = secrets.token_urlsafe(32)
+        now = int(time.time())
+        with db_connect(self.auth_db_path) as conn:
+            conn.execute(
+                "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                (token, user_row["id"], now, now + SESSION_TTL_SECONDS),
+            )
+            conn.commit()
+        payload = {
+            "ok": True,
+            "user": {"email": user_row["email"], "role": user_row["role"]},
+            "expires_at": now + SESSION_TTL_SECONDS,
+        }
+        if include_token:
+            payload["token"] = token
+        return payload, token
+
+    def _current_user(self) -> dict | None:
+        token = self._current_session_token()
+        if not token:
             return None
         now = int(time.time())
         with db_connect(self.auth_db_path) as conn:
@@ -225,7 +258,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
                 JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token = ? AND sessions.expires_at > ?
                 """,
-                (morsel.value, now),
+                (token, now),
             ).fetchone()
         return dict(row) if row else None
 
@@ -248,6 +281,13 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Location", f"login.html?next={urllib.parse.quote(next_page)}")
         self.end_headers()
 
+    def _authenticate_credentials(self, email: str, password: str) -> sqlite3.Row | None:
+        with db_connect(self.auth_db_path) as conn:
+            user = conn.execute("SELECT id, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+        if not user or not verify_password(password, user["password_hash"]):
+            return None
+        return user
+
     def _handle_login(self) -> None:
         try:
             payload = self._read_json()
@@ -256,28 +296,32 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             return
         email = str(payload.get("email") or "").strip().lower()
         password = str(payload.get("password") or "")
-        with db_connect(self.auth_db_path) as conn:
-            user = conn.execute("SELECT id, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
-            if not user or not verify_password(password, user["password_hash"]):
-                self._send_json(401, {"ok": False, "error": "invalid_credentials"})
-                return
-            token = secrets.token_urlsafe(32)
-            now = int(time.time())
-            conn.execute(
-                "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-                (token, user["id"], now, now + SESSION_TTL_SECONDS),
-            )
-            conn.commit()
+        user = self._authenticate_credentials(email, password)
+        if not user:
+            self._send_json(401, {"ok": False, "error": "invalid_credentials"})
+            return
+        response_payload, token = self._session_payload(user)
         cookie = http.cookies.SimpleCookie()
         cookie[SESSION_COOKIE] = token
         cookie[SESSION_COOKIE]["path"] = "/"
         cookie[SESSION_COOKIE]["httponly"] = True
         cookie[SESSION_COOKIE]["samesite"] = "Lax"
-        self._send_json(
-            200,
-            {"ok": True, "user": {"email": user["email"], "role": user["role"]}},
-            {"Set-Cookie": cookie.output(header="").strip()},
-        )
+        self._send_json(200, response_payload, {"Set-Cookie": cookie.output(header="").strip()})
+
+    def _handle_mobile_login(self) -> None:
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._send_json(400, {"ok": False, "error": "invalid_json"})
+            return
+        email = str(payload.get("email") or "").strip().lower()
+        password = str(payload.get("password") or "")
+        user = self._authenticate_credentials(email, password)
+        if not user:
+            self._send_json(401, {"ok": False, "error": "invalid_credentials"})
+            return
+        response_payload, _token = self._session_payload(user, include_token=True)
+        self._send_json(200, response_payload)
 
     def _handle_change_password(self) -> None:
         user = self._require_logged_in()
@@ -310,19 +354,31 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
 
     def _handle_logout(self) -> None:
-        cookie_header = self.headers.get("Cookie", "")
-        cookies = http.cookies.SimpleCookie(cookie_header)
-        token = cookies.get(SESSION_COOKIE)
+        token = self._current_session_token()
         if token:
             with db_connect(self.auth_db_path) as conn:
-                conn.execute("DELETE FROM sessions WHERE token = ?", (token.value,))
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
                 conn.commit()
         self._send_json(200, {"ok": True}, {"Set-Cookie": f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+
+    def _handle_mobile_logout(self) -> None:
+        token = self._authorization_token()
+        if token:
+            with db_connect(self.auth_db_path) as conn:
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                conn.commit()
+        self._send_json(200, {"ok": True})
 
     def _handle_me(self) -> None:
         user = self._current_user()
         if not user:
             self._send_json(401, {"ok": False, "error": "login_required"})
+            return
+        self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
+
+    def _handle_mobile_me(self) -> None:
+        user = self._require_admin()
+        if not user:
             return
         self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
 
@@ -499,20 +555,27 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
     def _crm_rows(self, conn: sqlite3.Connection, query: str, params: tuple = ()) -> list[dict]:
         return [dict(row) for row in conn.execute(query, params).fetchall()]
 
-    def _handle_admin_crm(self) -> None:
-        if not self._require_admin():
-            return
-        query = parse_qs(urllib.parse.urlparse(self.path).query)
-        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
-        try:
-            limit = max(1, min(int((query.get("limit") or [50])[0]), 100))
-        except Exception:
-            limit = 50
+    def _build_owner_crm_payload(self, site_id: str, limit: int) -> dict:
         crm = SoloCRM(self.crm_db_path)
         summary = crm.website_summary(site_id=site_id)
         customers = crm.list_website_customers(site_id=site_id, limit=limit)
         visitors = crm.list_website_visitors(site_id=site_id, limit=limit)
         with crm.connect() as conn:
+            followups = self._crm_rows(
+                conn,
+                """
+                SELECT activities.*, contacts.name AS contact_name, contacts.email AS contact_email,
+                       deals.title AS deal_title, websites.site_id, websites.name AS website_name
+                FROM activities
+                LEFT JOIN contacts ON contacts.id = activities.contact_id
+                LEFT JOIN deals ON deals.id = activities.deal_id
+                LEFT JOIN websites ON websites.id = activities.website_id
+                WHERE websites.site_id = ? AND activities.follow_up_at != '' AND activities.completed = 0
+                ORDER BY activities.follow_up_at ASC, activities.id ASC
+                LIMIT ?
+                """,
+                (site_id, limit),
+            )
             submissions = self._crm_rows(
                 conn,
                 """
@@ -565,8 +628,9 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "submissions": len(submissions),
             "visitors": summary.get("visitors", len(visitors)),
             "open_deals": summary.get("open_deals", len([deal for deal in deals if deal.get("stage") not in {"won", "lost"}])),
+            "due_followups": len(followups),
         }
-        self._send_json(200, {
+        return {
             "ok": True,
             "site_id": site_id,
             "summary": summary,
@@ -575,7 +639,41 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "visitors": visitors,
             "visits": visits,
             "deals": deals,
-        })
+            "followups": followups,
+        }
+
+    def _handle_admin_crm(self) -> None:
+        if not self._require_admin():
+            return
+        query = parse_qs(urllib.parse.urlparse(self.path).query)
+        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
+        try:
+            limit = max(1, min(int((query.get("limit") or [50])[0]), 100))
+        except Exception:
+            limit = 50
+        self._send_json(200, self._build_owner_crm_payload(site_id, limit))
+
+    def _handle_mobile_crm_summary(self) -> None:
+        if not self._require_admin():
+            return
+        query = parse_qs(urllib.parse.urlparse(self.path).query)
+        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
+        try:
+            limit = max(1, min(int((query.get("limit") or [10])[0]), 25))
+        except Exception:
+            limit = 10
+        payload = self._build_owner_crm_payload(site_id, limit)
+        compact = {
+            "ok": True,
+            "site_id": site_id,
+            "summary": payload["summary"],
+            "top_customers": payload["customers"][:5],
+            "recent_submissions": payload["submissions"][:5],
+            "recent_visitors": payload["visitors"][:5],
+            "recent_deals": payload["deals"][:5],
+            "next_followups": payload["followups"][:5],
+        }
+        self._send_json(200, compact)
 
     def _proxy_wiki(self) -> None:
         path = self.path.split("?", 1)[0]
@@ -640,9 +738,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "updated_at": int(path.stat().st_mtime) if path.exists() else 0,
         }
 
-    def _handle_skills_list(self) -> None:
-        if not self._require_admin():
-            return
+    def _collect_admin_skills(self) -> list[dict]:
         roots = [self.skills_root.expanduser().resolve(), self.site_skill_docs_root.expanduser().resolve()]
         skills = []
         for root in roots:
@@ -653,6 +749,29 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
                 if safe:
                     skills.append(self._skill_summary(safe))
         skills.sort(key=lambda item: (item.get("category", ""), item.get("name", "")))
+        return skills
+
+    def _handle_skills_list(self) -> None:
+        if not self._require_admin():
+            return
+        self._send_json(200, {"ok": True, "skills": self._collect_admin_skills()})
+
+    def _handle_mobile_skills_list(self) -> None:
+        if not self._require_admin():
+            return
+        skills = []
+        for item in self._collect_admin_skills():
+            skills.append(
+                {
+                    "id": item.get("relative_path", item.get("path", item.get("name", "skill"))).replace("/SKILL.md", ""),
+                    "name": item.get("name", "skill"),
+                    "category": item.get("category", "general"),
+                    "short_description": item.get("description", ""),
+                    "tags": [part for part in str(item.get("category", "")).replace("/", "-").split("-") if part],
+                    "updated_at": item.get("updated_at", 0),
+                    "source": "live",
+                }
+            )
         self._send_json(200, {"ok": True, "skills": skills})
 
     def _handle_skill_file_get(self) -> None:
@@ -1190,6 +1309,12 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._proxy_wiki()
         elif path == "/api/admin/crm":
             self._handle_admin_crm()
+        elif path == "/api/mobile/me":
+            self._handle_mobile_me()
+        elif path == "/api/mobile/crm-summary":
+            self._handle_mobile_crm_summary()
+        elif path == "/api/mobile/skills":
+            self._handle_mobile_skills_list()
         elif path == "/api/skills":
             self._handle_skills_list()
         elif path == "/api/skills/file":
@@ -1221,10 +1346,14 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._proxy_wiki()
         elif path == "/auth/login":
             self._handle_login()
+        elif path == "/api/mobile/auth/login":
+            self._handle_mobile_login()
         elif path == "/auth/change-password":
             self._handle_change_password()
         elif path == "/auth/logout":
             self._handle_logout()
+        elif path == "/api/mobile/auth/logout":
+            self._handle_mobile_logout()
         elif path == "/admin/upload":
             self._handle_upload()
         elif path == "/api/share/upload":
