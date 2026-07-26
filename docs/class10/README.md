@@ -7,6 +7,7 @@ This folder contains classroom documentation for **Class 10**, focused on turnin
 - Chinese slide/deck outline and page-by-page content
 - teacher handout and production guide
 - reusable Class 10 video-generation orchestrator skill copy
+- related packaged video workflow skills now stored under `skills/media/`
 - demo packs for:
   - AI Solo Company
   - mybnb
