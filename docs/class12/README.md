@@ -7,6 +7,8 @@ This folder contains classroom documentation for **Class 12**, focused on turnin
 - developer build spec and lesson plan
 - implementation plan
 - teacher handout
+- slide outline
+- live demo script
 - sample lead set
 - AI Solo Company demo case
 - reusable Class 12 skill copies
