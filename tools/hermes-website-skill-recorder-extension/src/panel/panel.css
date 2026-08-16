@@ -1,0 +1,97 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.app {
+  width: 380px;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: #38bdf8;
+  margin: 0 0 6px;
+}
+
+h1, h2 {
+  margin: 0 0 8px;
+}
+
+.subcopy {
+  color: #94a3b8;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+  cursor: pointer;
+  background: #38bdf8;
+  color: #0f172a;
+}
+
+button.secondary {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+}
+
+.sessionList {
+  display: grid;
+  gap: 10px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.sessionCard {
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #111827;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.sessionCard p {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.sessionActions {
+  display: flex;
+  gap: 8px;
+}
+
+.sessionActions button {
+  flex: 1;
+}
+
+textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+  padding: 12px;
+  box-sizing: border-box;
+}

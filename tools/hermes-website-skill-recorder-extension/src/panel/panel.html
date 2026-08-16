@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hermes Skill Recorder</title>
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <p class="eyebrow">Class 13</p>
+        <h1>Hermes skill recorder</h1>
+        <p class="subcopy">Record, review, approve, then export a website workflow skill draft.</p>
+      </header>
+
+      <section class="controls">
+        <button id="startButton">Start recording</button>
+        <button id="stopButton" class="secondary">Stop recording</button>
+        <button id="refreshButton" class="secondary">Refresh</button>
+      </section>
+
+      <section>
+        <h2>Recorded sessions</h2>
+        <div id="sessions" class="sessionList"></div>
+      </section>
+
+      <section>
+        <h2>Publication packet</h2>
+        <textarea id="packetOutput" readonly placeholder="Build a packet to preview the sanitized JSON and markdown draft."></textarea>
+      </section>
+    </main>
+    <script src="../content/shared.js"></script>
+    <script src="../shared/skill-builder.js"></script>
+    <script src="./panel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "hermes-website-skill-recorder-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension MVP for recording website workflows and exporting Hermes skill drafts.",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

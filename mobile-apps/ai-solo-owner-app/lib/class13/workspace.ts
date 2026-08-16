@@ -89,6 +89,24 @@ function buildTrackMilestones(track: ClassLaunchTrack, state: Class13WorkspaceSt
     };
   }
 
+  if (track.id.includes('website-skill')) {
+    common[0] = {
+      id: `${track.id}-capture`,
+      title: 'Capture the website workflow',
+      detail: `Record the target website workflow for ${state.targetCustomer} and define the exact success condition.`,
+    };
+    common[1] = {
+      id: `${track.id}-review`,
+      title: 'Review and redact the timeline',
+      detail: 'Remove accidental steps, confirm stable selectors, and redact secrets before export.',
+    };
+    common[2] = {
+      id: `${track.id}-export`,
+      title: 'Export the Hermes skill draft',
+      detail: 'Build the markdown skill draft and publication packet for human review.',
+    };
+  }
+
   return common;
 }
 
@@ -134,6 +152,10 @@ export function buildClass13ExecutionPlan(
     'CRM Website Reporting',
     'SEO GEO Growth',
   ];
+
+  if (track.id.includes('website-skill')) {
+    recommendedSkills.splice(1, recommendedSkills.length - 1, 'Website Chatbot CRM', 'Static Website Local Preview', 'GitHub PR Workflow');
+  }
 
   return {
     track,

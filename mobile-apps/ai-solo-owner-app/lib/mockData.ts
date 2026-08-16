@@ -63,6 +63,14 @@ export const class13Tracks: ClassLaunchTrack[] = [
     focus: 'Best for service businesses that need local lead generation, trust signals, and repeatable delivery.',
     nextStep: 'Choose the target local niche, pricing starter package, and first outreach channel.',
   },
+  {
+    id: 'class13-website-skill-recorder',
+    title: 'Website skill recorder publishing',
+    skillName: 'Class13 Website Skill Recorder Publishing',
+    outcome: 'Capture a human website workflow and package it into a reusable Hermes skill draft.',
+    focus: 'Best when the business already has a repeatable website task that should be taught to Hermes or another bot.',
+    nextStep: 'Record the workflow, review the action timeline, redact sensitive data, and export the skill draft.',
+  },
 ];
 
 export const starterPrompts = [

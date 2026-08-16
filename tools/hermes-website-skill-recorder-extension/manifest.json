@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Hermes Website Skill Recorder",
+  "version": "0.1.0",
+  "description": "Record approved website workflows and export Hermes-ready skill drafts.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Hermes Skill Recorder",
+    "default_popup": "src/panel/panel.html"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/shared.js",
+        "src/content/recorder.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -46,3 +46,19 @@ test('restoreClass13WorkspaceState keeps valid saved values and falls back when 
   assert.equal(fallback.selectedTrackId, class13Tracks[0]?.id);
   assert.equal(fallback.targetCustomer, 'Founder-led service business');
 });
+
+
+test('buildClass13ExecutionPlan adapts milestones for the website skill recorder track', () => {
+  const state = restoreClass13WorkspaceState({
+    selectedTrackId: 'class13-website-skill-recorder',
+    targetCustomer: 'Operations team',
+    revenueGoal: '$5k pilot',
+    operatorNote: 'Record the approval flow first.',
+  });
+  const plan = buildClass13ExecutionPlan(state, class13Tracks);
+
+  assert.equal(plan.track.id, 'class13-website-skill-recorder');
+  assert.match(plan.milestones[0]?.title ?? '', /capture the website workflow/i);
+  assert.ok(plan.recommendedSkills.includes('Website Chatbot CRM'));
+  assert.ok(plan.recommendedSkills.includes('GitHub PR Workflow'));
+});
