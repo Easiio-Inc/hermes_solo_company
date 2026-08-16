@@ -11,3 +11,5 @@ export const defaultGatewayConfig: GatewayConfig = {
 
 export const OWNER_APP_CONFIG_KEY = 'ai-solo-owner-app-config';
 export const OWNER_APP_AUTH_KEY = 'ai-solo-owner-app-auth';
+export const OWNER_APP_CLASS12_WORKSPACE_KEY = 'ai-solo-owner-app-class12-workspace';
+export const OWNER_APP_CLASS13_WORKSPACE_KEY = 'ai-solo-owner-app-class13-workspace';

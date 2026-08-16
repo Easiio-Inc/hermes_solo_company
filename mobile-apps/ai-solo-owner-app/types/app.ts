@@ -35,6 +35,15 @@ export type SkillSummary = {
   source?: 'catalog' | 'live';
 };
 
+export type ClassLaunchTrack = {
+  id: string;
+  title: string;
+  skillName: string;
+  outcome: string;
+  focus: string;
+  nextStep: string;
+};
+
 export type WebsiteMetricStatus = 'healthy' | 'warning' | 'danger' | 'info';
 
 export type WebsiteMetric = {

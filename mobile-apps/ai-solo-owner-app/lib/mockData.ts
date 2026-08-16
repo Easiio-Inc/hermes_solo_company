@@ -1,6 +1,7 @@
 import type {
   BotStatus,
   ChatMessage,
+  ClassLaunchTrack,
   OwnerProfile,
   SkillSummary,
   WebsiteAlert,
@@ -24,7 +25,44 @@ export const botStatus: BotStatus = {
 export const heroActions = [
   { id: 'chat', label: 'Open Hermes chat', href: '/(tabs)/chat' as const },
   { id: 'skills', label: 'Browse skills', href: '/(tabs)/skills' as const },
+  { id: 'class12', label: 'Run Class 12', href: '/(tabs)/class12' as const },
+  { id: 'class13', label: 'Run Class 13', href: '/(tabs)/class13' as const },
   { id: 'monitor', label: 'Monitor website', href: '/(tabs)/monitor' as const },
+];
+
+export const class13Tracks: ClassLaunchTrack[] = [
+  {
+    id: 'class13-ai-consulting-offer',
+    title: 'AI consulting offer builder',
+    skillName: 'AI Consulting Offer Builder',
+    outcome: 'Package one clear AI service offer with pricing logic, scope, and delivery steps.',
+    focus: 'Turn service knowledge into a sellable consulting offer.',
+    nextStep: 'Choose one offer, define the buyer problem, and prepare the first proposal skeleton.',
+  },
+  {
+    id: 'class13-business-model',
+    title: 'Business model commercialization orchestrator',
+    skillName: 'Business Model Commercialization Orchestrator',
+    outcome: 'Compare monetization paths and pick the best operating model for the business.',
+    focus: 'Decide whether the next growth step should be services, productized packages, SaaS, or hybrid.',
+    nextStep: 'Review the trade-offs, then lock one primary monetization path for this quarter.',
+  },
+  {
+    id: 'class13-ecommerce',
+    title: 'Ecommerce solo company launch',
+    skillName: 'Ecommerce Solo Company Launch',
+    outcome: 'Turn one product idea into a launch-ready ecommerce workflow with offer, funnel, and ops.',
+    focus: 'Best when the business needs product selection, positioning, and a lightweight commerce launch plan.',
+    nextStep: 'Pick the hero product, define the audience, and map the first launch funnel.',
+  },
+  {
+    id: 'class13-local-service',
+    title: 'Local service growth launch',
+    skillName: 'Local Service Growth Launch',
+    outcome: 'Turn a local service concept into a practical acquisition and fulfillment plan.',
+    focus: 'Best for service businesses that need local lead generation, trust signals, and repeatable delivery.',
+    nextStep: 'Choose the target local niche, pricing starter package, and first outreach channel.',
+  },
 ];
 
 export const starterPrompts = [

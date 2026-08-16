@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { theme } from '@/constants/theme';
-import { heroActions } from '@/lib/mockData';
+import { class13Tracks, heroActions } from '@/lib/mockData';
 import { useOwnerApp } from '@/context/OwnerAppContext';
 
 export default function HomeScreen() {
@@ -36,7 +36,7 @@ export default function HomeScreen() {
         </View>
         <View style={styles.chipRow}>
           {heroActions.map((action) => (
-            <Pressable key={action.id} onPress={() => router.push(action.href)} style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}>
+            <Pressable key={action.id} onPress={() => router.push(String(action.href) as never)} style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}>
               <Text style={styles.quickActionText}>{action.label}</Text>
             </Pressable>
           ))}
@@ -60,6 +60,25 @@ export default function HomeScreen() {
           <View key={alert.id} style={styles.alertItem}>
             <Text style={styles.alertTitle}>{alert.title}</Text>
             <Text style={styles.alertDetail}>{alert.detail}</Text>
+          </View>
+        ))}
+      </SectionCard>
+
+      <SectionCard eyebrow="Class 13" title="Commercialization launch tracks" rightLabel={`${class13Tracks.length} tracks`}>
+        <Text style={styles.sectionIntro}>
+          Move from workflow building into monetization: choose the Class 13 path that best fits the next revenue move for AI Solo Company.
+        </Text>
+        {class13Tracks.map((track) => (
+          <View key={track.id} style={styles.trackCard}>
+            <View style={styles.trackHeader}>
+              <Text style={styles.trackTitle}>{track.title}</Text>
+              <Text style={styles.trackSkill}>{track.skillName}</Text>
+            </View>
+            <Text style={styles.trackBody}>{track.outcome}</Text>
+            <Text style={styles.trackMetaLabel}>Focus</Text>
+            <Text style={styles.trackMetaText}>{track.focus}</Text>
+            <Text style={styles.trackMetaLabel}>Next step</Text>
+            <Text style={styles.trackMetaText}>{track.nextStep}</Text>
           </View>
         ))}
       </SectionCard>
@@ -159,5 +178,50 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: 13,
     lineHeight: 20,
+  },
+  sectionIntro: {
+    color: theme.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  trackCard: {
+    backgroundColor: theme.colors.cardSoft,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    gap: theme.spacing.xs,
+  },
+  trackHeader: {
+    gap: 4,
+  },
+  trackTitle: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  trackSkill: {
+    color: theme.colors.tint,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  trackBody: {
+    color: theme.colors.text,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  trackMetaLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  trackMetaText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

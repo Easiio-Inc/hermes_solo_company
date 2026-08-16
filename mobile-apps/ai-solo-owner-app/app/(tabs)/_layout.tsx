@@ -47,6 +47,20 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="class12"
+        options={{
+          title: 'Class 12',
+          tabBarIcon: ({ color }) => <TabIcon symbol="◎" color={String(color)} />,
+        }}
+      />
+      <Tabs.Screen
+        name="class13"
+        options={{
+          title: 'Class 13',
+          tabBarIcon: ({ color }) => <TabIcon symbol="◉" color={String(color)} />,
+        }}
+      />
+      <Tabs.Screen
         name="monitor"
         options={{
           title: 'Monitor',
