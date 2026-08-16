@@ -160,13 +160,45 @@ docs/seo/blog-briefs.json
 
 ## What Phase 4 Adds
 
-Phase 4 adds lead detection and CRM handoff:
+Phase 4 adds lead detection, outbound list building, and CRM handoff:
 
 - lead signal definitions
+- outbound prospect list scaffolding
+- CSV/JSON prospect import
+- deterministic prospect dedupe and enrichment
+- scoring-ready outbound export
 - lead scorecards
 - outreach drafts
 - CRM-ready JSON/CSV export
 - follow-up schedule
+
+Build an outbound list before scoring:
+
+```bash
+scripts/marketing_agency.py create-prospect-list \
+  --project-dir generated-marketing/acme-lidar \
+  --name "bay-area-quarries" \
+  --description "Bay Area quarry operators and aggregate yards to review for outbound"
+
+scripts/marketing_agency.py import-prospects \
+  --project-dir generated-marketing/acme-lidar \
+  --list-id bay-area-quarries \
+  --csv docs/leads/prospect-lists/outbound-prospects-template.csv \
+  --source apollo \
+  --channel Email
+
+scripts/marketing_agency.py dedupe-prospects \
+  --project-dir generated-marketing/acme-lidar \
+  --list-id bay-area-quarries
+
+scripts/marketing_agency.py enrich-prospects \
+  --project-dir generated-marketing/acme-lidar \
+  --list-id bay-area-quarries
+
+scripts/marketing_agency.py export-prospects-for-scoring \
+  --project-dir generated-marketing/acme-lidar \
+  --list-id bay-area-quarries
+```
 
 Define lead signals:
 
@@ -212,14 +244,25 @@ Phase 4 writes:
 ```text
 docs/leads/lead-signals.md
 docs/leads/lead-signals.json
+docs/leads/prospect-lists/outbound-prospects-template.csv
+docs/leads/prospect-lists/<list-slug>.md
+docs/leads/prospect-lists/<list-slug>.json
+docs/leads/prospect-lists/<list-slug>-import.md
+docs/leads/prospect-lists/<list-slug>-import.json
+docs/leads/prospect-lists/<list-slug>-dedupe.md
+docs/leads/prospect-lists/<list-slug>-dedupe.json
+docs/leads/prospect-lists/<list-slug>-enriched.md
+docs/leads/prospect-lists/<list-slug>-enriched.json
+docs/leads/prospect-lists/<list-slug>-for-scoring.csv
+docs/leads/prospect-lists/<list-slug>-for-scoring.json
 docs/leads/lead-scorecards.md
 docs/leads/lead-scorecards.json
 docs/leads/outreach-drafts.md
 docs/leads/outreach-drafts.json
 docs/leads/crm-export.json
 docs/leads/crm-export.csv
-docs/hermes-marketing-state.json
 ```
+
 
 ## What Phase 5 Adds
 

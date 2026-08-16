@@ -3,9 +3,10 @@
 
 Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
 and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. Phase 4
-adds lead signal definitions, lead scoring, outreach drafts, and CRM export.
-Phase 5 adds performance snapshots, optimization recommendations, and manager
-dashboards. Phase 6 adds competitor intelligence and trend watch reports.
+adds outbound prospect list building, lead signal definitions, lead scoring,
+outreach drafts, and CRM export. Phase 5 adds performance snapshots,
+optimization recommendations, and manager dashboards. Phase 6 adds competitor
+intelligence and trend watch reports.
 Phase 7 adds approval packages, execution queues, change logs, and operator
 handoffs. Phase 8 adds platform integration handoff adapters and execution
 evidence capture. Phase 9 adds saved monitoring queries, monitor schedule
@@ -37,6 +38,7 @@ WORKSPACE_STATE_PATH = Path("docs") / "hermes-marketing-workspace.json"
 CONTENT_DIR = Path("docs") / "content"
 SEO_DIR = Path("docs") / "seo"
 LEADS_DIR = Path("docs") / "leads"
+PROSPECT_LISTS_DIR = LEADS_DIR / "prospect-lists"
 ANALYTICS_DIR = Path("docs") / "analytics"
 COMPETITOR_DIR = Path("docs") / "competitors"
 EXECUTION_DIR = Path("docs") / "execution"
@@ -99,6 +101,12 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("seoPlans", [])
     data.setdefault("blogBriefs", [])
     data.setdefault("leadSignals", [])
+    data.setdefault("prospectLists", [])
+    data.setdefault("prospectImports", [])
+    data.setdefault("prospectDedupes", [])
+    data.setdefault("prospectEnrichments", [])
+    data.setdefault("prospectExports", [])
+    data.setdefault("leadImports", [])
     data.setdefault("leadScorecards", [])
     data.setdefault("outreachDrafts", [])
     data.setdefault("crmExports", [])
@@ -135,6 +143,12 @@ def default_state() -> dict[str, Any]:
         "seoPlans": [],
         "blogBriefs": [],
         "leadSignals": [],
+        "prospectLists": [],
+        "prospectImports": [],
+        "prospectDedupes": [],
+        "prospectEnrichments": [],
+        "prospectExports": [],
+        "leadImports": [],
         "leadScorecards": [],
         "outreachDrafts": [],
         "crmExports": [],
@@ -413,6 +427,172 @@ def generate_blog_briefs(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def create_prospect_list(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    prospect_list = build_prospect_list(strategy=strategy, name=args.name, description=args.description)
+    list_json_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}.json"
+    list_md_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}.md"
+    write_text(list_json_path, json.dumps(prospect_list, indent=2))
+    write_text(list_md_path, render_prospect_list_markdown(prospect_list))
+    record_prospect_list(project_dir, prospect_list)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "list": prospect_list,
+        "listJsonPath": str(list_json_path),
+        "listMarkdownPath": str(list_md_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Import prospects from CSV or JSON with import-prospects.",
+    }
+
+
+def import_prospects(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    prospect_list = select_prospect_list(state, args.list_id)
+    if not prospect_list:
+        return {"ok": False, "error": "No prospect list found. Run create-prospect-list first."}
+    if bool(args.csv) == bool(args.json_path):
+        return {"ok": False, "error": "Provide exactly one source: --csv or --json-path."}
+
+    if args.csv:
+        source_path = Path(args.csv).expanduser().resolve()
+        if not source_path.exists():
+            return {"ok": False, "error": f"CSV file does not exist: {source_path}"}
+        rows = load_prospects_csv(source_path, fallback_source=args.source, fallback_channel=args.channel, limit=args.limit)
+    else:
+        source_path = Path(args.json_path).expanduser().resolve()
+        if not source_path.exists():
+            return {"ok": False, "error": f"JSON file does not exist: {source_path}"}
+        rows = load_prospects_json(source_path, fallback_source=args.source, fallback_channel=args.channel, limit=args.limit)
+    if not rows:
+        return {"ok": False, "error": f"No usable prospect rows found in: {source_path}"}
+
+    prospect_import = build_prospect_import(prospect_list=prospect_list, source_path=source_path, rows=rows)
+    import_json_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-import.json"
+    import_md_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-import.md"
+    write_text(import_json_path, json.dumps(prospect_import, indent=2))
+    write_text(import_md_path, render_prospect_import_markdown(prospect_import))
+    record_prospect_import(project_dir, prospect_import)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "list": prospect_list,
+        "rows": rows,
+        "importedCount": len(rows),
+        "importJsonPath": str(import_json_path),
+        "importMarkdownPath": str(import_md_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Review duplicates with dedupe-prospects.",
+    }
+
+
+def dedupe_prospects(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    prospect_list = select_prospect_list(state, args.list_id)
+    if not prospect_list:
+        return {"ok": False, "error": "No prospect list found. Run create-prospect-list first."}
+    rows = prospect_rows_for_list(state, prospect_list["id"])
+    if not rows:
+        return {"ok": False, "error": "No imported prospects found. Run import-prospects first."}
+
+    dedupe_report = build_prospect_dedupe_report(prospect_list=prospect_list, rows=rows)
+    dedupe_json_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-dedupe.json"
+    dedupe_md_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-dedupe.md"
+    write_text(dedupe_json_path, json.dumps(dedupe_report, indent=2))
+    write_text(dedupe_md_path, render_prospect_dedupe_markdown(dedupe_report))
+    record_prospect_dedupe(project_dir, dedupe_report)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "list": prospect_list,
+        "keptRows": dedupe_report["rows"],
+        "keptCount": dedupe_report["keptCount"],
+        "removedCount": dedupe_report["removedCount"],
+        "dedupeJsonPath": str(dedupe_json_path),
+        "dedupeMarkdownPath": str(dedupe_md_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Enrich the deduped list with enrich-prospects.",
+    }
+
+
+def enrich_prospects(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    prospect_list = select_prospect_list(state, args.list_id)
+    if not prospect_list:
+        return {"ok": False, "error": "No prospect list found. Run create-prospect-list first."}
+    dedupe_report = latest_prospect_dedupe(state, prospect_list["id"])
+    rows = dedupe_report.get("rows", []) if isinstance(dedupe_report, dict) else []
+    if not rows:
+        return {"ok": False, "error": "No deduped prospects found. Run dedupe-prospects first."}
+
+    enrichment = build_prospect_enrichment(prospect_list=prospect_list, rows=rows)
+    enrichment_json_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-enriched.json"
+    enrichment_md_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-enriched.md"
+    write_text(enrichment_json_path, json.dumps(enrichment, indent=2))
+    write_text(enrichment_md_path, render_prospect_enrichment_markdown(enrichment))
+    record_prospect_enrichment(project_dir, enrichment)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "list": prospect_list,
+        "rows": enrichment["rows"],
+        "enrichedCount": enrichment["rowCount"],
+        "enrichmentJsonPath": str(enrichment_json_path),
+        "enrichmentMarkdownPath": str(enrichment_md_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Export a clean scoring CSV with export-prospects-for-scoring.",
+    }
+
+
+def export_prospects_for_scoring(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    prospect_list = select_prospect_list(state, args.list_id)
+    if not prospect_list:
+        return {"ok": False, "error": "No prospect list found. Run create-prospect-list first."}
+    enrichment = latest_prospect_enrichment(state, prospect_list["id"])
+    rows = enrichment.get("rows", []) if isinstance(enrichment, dict) else []
+    if not rows:
+        return {"ok": False, "error": "No enriched prospects found. Run enrich-prospects first."}
+
+    export = build_prospect_export(prospect_list=prospect_list, rows=rows)
+    export_csv_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-for-scoring.csv"
+    export_json_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-for-scoring.json"
+    export_md_path = project_dir / PROSPECT_LISTS_DIR / f"{prospect_list['slug']}-for-scoring.md"
+    write_text(export_csv_path, prospect_rows_to_csv(export['rows']))
+    write_text(export_json_path, json.dumps(export, indent=2))
+    write_text(export_md_path, render_prospect_export_markdown(export))
+    record_prospect_export(project_dir, {**export, 'path': str(export_csv_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "list": prospect_list,
+        "exportCsvPath": str(export_csv_path),
+        "exportJsonPath": str(export_json_path),
+        "exportMarkdownPath": str(export_md_path),
+        "rowCount": export['rowCount'],
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Run batch-score-leads on the exported CSV.",
+    }
+
+
 def define_lead_signals(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
@@ -440,6 +620,129 @@ def define_lead_signals(args: argparse.Namespace) -> dict[str, Any]:
         "leadSignalsJsonPath": str(signals_json_path),
         "statePath": str(project_dir / STATE_PATH),
         "next": "Score inbound or monitored lead text with score-lead.",
+    }
+
+
+def batch_score_leads(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    csv_path = Path(args.csv).expanduser().resolve()
+    if not csv_path.exists():
+        return {"ok": False, "error": f"CSV file does not exist: {csv_path}"}
+
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    lead_signals = state.get("lastLeadSignals", {}) if isinstance(state.get("lastLeadSignals"), dict) else {}
+    if not lead_signals:
+        lead_signals = build_lead_signals(strategy, channels=[], signals=[], negative_signals=[])
+
+    imported_rows = load_leads_csv(
+        csv_path,
+        fallback_source=args.source,
+        fallback_channel=args.channel,
+        limit=args.limit,
+    )
+    if not imported_rows:
+        return {"ok": False, "error": f"No usable lead rows found in CSV: {csv_path}"}
+
+    lead_import = build_lead_import(csv_path, imported_rows)
+    import_md_path = project_dir / LEADS_DIR / "imported-leads.md"
+    import_json_path = project_dir / LEADS_DIR / "imported-leads.json"
+    write_text(import_md_path, render_imported_leads_markdown(lead_import))
+    write_text(import_json_path, json.dumps(lead_import, indent=2))
+    record_lead_import(project_dir, lead_import)
+
+    existing_scorecards = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    new_scorecards = [
+        build_lead_scorecard(
+            name=row["name"],
+            company=row["company"],
+            source=row["source"],
+            text=row["text"],
+            url=row["url"],
+            role=row["role"],
+            channel=row["channel"],
+            strategy=strategy,
+            lead_signals=lead_signals,
+        )
+        for row in imported_rows
+    ]
+    scorecards = existing_scorecards + new_scorecards
+    scorecards_path = project_dir / LEADS_DIR / "lead-scorecards.md"
+    scorecards_json_path = project_dir / LEADS_DIR / "lead-scorecards.json"
+    write_text(scorecards_path, render_scorecards_markdown(scorecards))
+    write_text(scorecards_json_path, json.dumps(scorecards, indent=2))
+    record_lead_scorecards(project_dir, new_scorecards)
+
+    grade_counts: dict[str, int] = {"hot": 0, "warm": 0, "nurture": 0}
+    for scorecard in new_scorecards:
+        grade = str(scorecard.get("grade") or "nurture")
+        grade_counts[grade] = grade_counts.get(grade, 0) + 1
+
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "csvPath": str(csv_path),
+        "importedCount": len(imported_rows),
+        "scoredCount": len(new_scorecards),
+        "gradeCounts": grade_counts,
+        "leadImportPath": str(import_json_path),
+        "leadImportMarkdownPath": str(import_md_path),
+        "scorecardsPath": str(scorecards_path),
+        "scorecardsJsonPath": str(scorecards_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Review the scored leads, draft outreach for the best ones, or export CRM rows with crm-export.",
+    }
+
+
+def batch_draft_outreach(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    campaign = state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}
+    scorecards = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    if not scorecards:
+        return {"ok": False, "error": "No lead scorecards found. Run score-lead or batch-score-leads first."}
+
+    eligible = select_scorecards_for_outreach(
+        scorecards,
+        existing_drafts=[item for item in state.get("outreachDrafts", []) if isinstance(item, dict)],
+        min_grade=args.min_grade,
+        channel=args.channel,
+        limit=args.limit,
+    )
+    drafts = [
+        build_outreach_draft(
+            scorecard=scorecard,
+            strategy=strategy,
+            campaign=campaign,
+            channel=args.channel,
+            tone=args.tone,
+            cta=args.cta,
+        )
+        for scorecard in eligible
+    ]
+    all_drafts = [item for item in state.get("outreachDrafts", []) if isinstance(item, dict)] + drafts
+    drafts_path = project_dir / LEADS_DIR / "outreach-drafts.md"
+    drafts_json_path = project_dir / LEADS_DIR / "outreach-drafts.json"
+    write_text(drafts_path, render_outreach_markdown(all_drafts))
+    write_text(drafts_json_path, json.dumps(all_drafts, indent=2))
+    record_outreach_drafts(project_dir, drafts)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "selectedCount": len(eligible),
+        "createdCount": len(drafts),
+        "createdLeadIds": [str(draft.get("leadId") or "") for draft in drafts],
+        "outreachDraftsPath": str(drafts_path),
+        "outreachDraftsJsonPath": str(drafts_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Batch outreach drafts created for review. Sending requires explicit approval.",
     }
 
 
@@ -549,6 +852,190 @@ def crm_export(args: argparse.Namespace) -> dict[str, Any]:
         "crmExportPath": str(export_path),
         "statePath": str(project_dir / STATE_PATH),
         "message": "CRM export prepared as a review artifact. Importing or writing CRM records requires approval.",
+    }
+
+
+def batch_crm_export(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    rows = batch_crm_rows_from_state(
+        state,
+        owner=args.owner,
+        min_grade=args.min_grade,
+        require_draft=args.require_draft,
+    )
+    if not rows:
+        return {"ok": False, "error": "No CRM export rows matched the requested filters."}
+    export = build_batch_crm_export(rows, owner=args.owner, format=args.format, min_grade=args.min_grade, require_draft=args.require_draft)
+    export_path = project_dir / LEADS_DIR / f"crm-export-batch.{args.format}"
+    export_md_path = project_dir / LEADS_DIR / "crm-export-batch.md"
+    if args.format == "csv":
+        write_text(export_path, crm_rows_to_csv(rows))
+    else:
+        write_text(export_path, json.dumps(export, indent=2))
+    write_text(export_md_path, render_batch_crm_export_markdown(export))
+    record_crm_export(project_dir, {**export, "path": str(export_path), "summaryPath": str(export_md_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "crmExport": export,
+        "crmExportPath": str(export_path),
+        "crmExportMarkdownPath": str(export_md_path),
+        "leadCount": export["leadCount"],
+        "trackCounts": export["trackCounts"],
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Batch CRM export prepared as a review artifact grouped by track. Importing or writing CRM records requires approval.",
+    }
+
+
+
+def approve_batch_actions(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+
+    state = read_state(project_dir / STATE_PATH)
+    draft_ids = set(parse_list(args.draft_ids))
+    lead_ids = set(parse_list(args.lead_ids))
+    drafts = [dict(item) for item in state.get("outreachDrafts", []) if isinstance(item, dict)]
+    selected_drafts = [dict(item) for item in drafts if str(item.get("id") or "") in draft_ids] if draft_ids else []
+    missing_draft_ids = sorted(draft_ids - {str(item.get("id") or "") for item in selected_drafts})
+    if missing_draft_ids:
+        return {"ok": False, "error": f"No outreach drafts matched: {', '.join(missing_draft_ids)}"}
+
+    inferred_lead_ids = {str(item.get("leadId") or "") for item in selected_drafts if str(item.get("leadId") or "").strip()}
+    if not lead_ids:
+        lead_ids = inferred_lead_ids
+
+    all_rows = batch_crm_rows_from_state(state, owner=args.owner, min_grade="nurture", require_draft=False)
+    selected_rows = [dict(item) for item in all_rows if str(item.get("lead_id") or "") in lead_ids] if lead_ids else []
+    missing_lead_ids = sorted(lead_ids - {str(item.get("lead_id") or "") for item in selected_rows})
+    if missing_lead_ids:
+        return {"ok": False, "error": f"No CRM rows matched: {', '.join(missing_lead_ids)}"}
+    if not selected_drafts and not selected_rows:
+        return {"ok": False, "error": "Select at least one outreach draft or CRM row to approve."}
+
+    package = build_batch_action_approval_package(state, drafts=selected_drafts, crm_rows=selected_rows, owner=args.owner)
+    decision = build_approval_decision(
+        package=package,
+        decision="approved",
+        approver=args.approver,
+        notes=args.notes,
+    )
+    approved_drafts = approved_outreach_drafts(selected_drafts, package_id=package["id"], decision_id=decision["id"])
+    approved_rows = approved_crm_rows(selected_rows, package_id=package["id"], decision_id=decision["id"])
+    crm_export = build_batch_crm_export(
+        approved_rows,
+        owner=args.owner,
+        format=args.format,
+        min_grade="selected",
+        require_draft=False,
+    )
+    crm_export["type"] = "crm-export-ready"
+    crm_export["approvalStatus"] = "approved"
+    crm_export["packageId"] = package["id"]
+    crm_export["decisionId"] = decision["id"]
+
+    all_drafts = replace_outreach_drafts(drafts, approved_drafts)
+    drafts_path = project_dir / LEADS_DIR / "outreach-drafts.md"
+    drafts_json_path = project_dir / LEADS_DIR / "outreach-drafts.json"
+    ready_drafts_path = project_dir / LEADS_DIR / "ready-outreach-drafts.md"
+    ready_drafts_json_path = project_dir / LEADS_DIR / "ready-outreach-drafts.json"
+    ready_crm_path = project_dir / LEADS_DIR / f"ready-crm-import.{args.format}"
+    ready_crm_md_path = project_dir / LEADS_DIR / "ready-crm-import.md"
+    package_path = project_dir / LEADS_DIR / "approved-batch-actions.md"
+    package_json_path = project_dir / LEADS_DIR / "approved-batch-actions.json"
+
+    ready_crm_content = crm_rows_to_csv(approved_rows) if args.format == "csv" else json.dumps(crm_export, indent=2)
+    file_writes = [
+        (drafts_path, render_outreach_markdown(all_drafts)),
+        (drafts_json_path, json.dumps(all_drafts, indent=2)),
+        (ready_drafts_path, render_outreach_markdown(approved_drafts)),
+        (ready_drafts_json_path, json.dumps(approved_drafts, indent=2)),
+        (ready_crm_path, ready_crm_content),
+        (ready_crm_md_path, render_batch_crm_export_markdown(crm_export)),
+        (package_path, render_approval_package_markdown(package)),
+        (package_json_path, json.dumps(package, indent=2)),
+    ]
+    state_path = project_dir / STATE_PATH
+    restore_targets: list[tuple[Path, str | None]] = []
+    for path, _ in file_writes:
+        previous = path.read_text(encoding="utf-8") if path.exists() else None
+        restore_targets.append((path, previous))
+    prior_state_text = state_path.read_text(encoding="utf-8") if state_path.exists() else None
+    try:
+        for path, content in file_writes:
+            write_text(path, content)
+
+        package_record = {
+            **package,
+            "path": str(package_path),
+            "readyOutreachPath": str(ready_drafts_path),
+            "readyCrmPath": str(ready_crm_path),
+        }
+        export_record = {
+            **crm_export,
+            "path": str(ready_crm_path),
+            "summaryPath": str(ready_crm_md_path),
+        }
+        state["outreachDrafts"] = all_drafts
+        state.setdefault("crmExports", []).append(export_record)
+        state.setdefault("approvalPackages", []).append(package_record)
+        state.setdefault("approvalDecisions", []).append(decision)
+        state["lastCrmExport"] = export_record
+        state["lastApprovalPackage"] = package_record
+        state["lastApprovalDecision"] = decision
+        state["workflowState"] = "lead_batch_approved"
+        write_state(project_dir, state)
+    except OSError as exc:
+        for path, previous in restore_targets:
+            try:
+                if previous is None:
+                    if path.exists():
+                        path.unlink()
+                else:
+                    write_text(path, previous)
+            except OSError:
+                pass
+        try:
+            if prior_state_text is None:
+                if state_path.exists():
+                    state_path.unlink()
+            else:
+                write_text(state_path, prior_state_text)
+        except OSError:
+            pass
+        return {"ok": False, "error": f"Failed to write approval artifacts: {exc}"}
+
+    package_record = {
+        **package,
+        "path": str(package_path),
+        "readyOutreachPath": str(ready_drafts_path),
+        "readyCrmPath": str(ready_crm_path),
+    }
+    export_record = {
+        **crm_export,
+        "path": str(ready_crm_path),
+        "summaryPath": str(ready_crm_md_path),
+    }
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "approvedDraftCount": len(approved_drafts),
+        "approvedLeadCount": len(approved_rows),
+        "approvalPackage": package_record,
+        "approvalPackagePath": str(package_path),
+        "approvalPackageJsonPath": str(package_json_path),
+        "approvalDecision": decision,
+        "readyOutreachPath": str(ready_drafts_path),
+        "readyOutreachJsonPath": str(ready_drafts_json_path),
+        "readyCrmPath": str(ready_crm_path),
+        "readyCrmMarkdownPath": str(ready_crm_md_path),
+        "crmExport": crm_export,
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Selected outreach drafts and CRM rows were approved and packaged for operator send/import.",
     }
 
 
@@ -1376,6 +1863,39 @@ def select_lead_scorecard(state: dict[str, Any], lead_id: str) -> dict[str, Any]
     return scorecard if isinstance(scorecard, dict) else {}
 
 
+def lead_grade_rank(grade: str) -> int:
+    ranks = {"nurture": 1, "warm": 2, "hot": 3}
+    return ranks.get(str(grade or "").strip().lower(), 0)
+
+
+def select_scorecards_for_outreach(
+    scorecards: list[dict[str, Any]],
+    *,
+    existing_drafts: list[dict[str, Any]],
+    min_grade: str,
+    channel: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    min_rank = lead_grade_rank(min_grade or "hot")
+    drafted_pairs = {
+        (str(draft.get("leadId") or ""), str(draft.get("channel") or ""))
+        for draft in existing_drafts
+        if isinstance(draft, dict)
+    }
+    eligible = []
+    for scorecard in scorecards:
+        if lead_grade_rank(str(scorecard.get("grade") or "")) < min_rank:
+            continue
+        pair = (str(scorecard.get("id") or ""), channel)
+        if pair in drafted_pairs:
+            continue
+        eligible.append(scorecard)
+    eligible.sort(key=lambda item: (lead_grade_rank(str(item.get("grade") or "")), float(item.get("score") or 0)), reverse=True)
+    if limit:
+        return eligible[:limit]
+    return eligible
+
+
 def select_competitor(state: dict[str, Any], competitor_id_or_name: str) -> dict[str, Any]:
     needle = competitor_id_or_name.strip().lower()
     competitors = [item for item in state.get("competitors", []) if isinstance(item, dict)]
@@ -1917,13 +2437,367 @@ def crm_rows_from_state(state: dict[str, Any], *, owner: str) -> list[dict[str, 
     return rows
 
 
+def lead_track(grade: str) -> str:
+    normalized = str(grade or "").strip().lower()
+    if normalized == "hot":
+        return "priority_outreach"
+    if normalized == "warm":
+        return "active_nurture"
+    return "long_term_nurture"
+
+
+def batch_crm_rows_from_state(state: dict[str, Any], *, owner: str, min_grade: str, require_draft: bool) -> list[dict[str, Any]]:
+    rows = crm_rows_from_state(state, owner=owner)
+    minimum = lead_grade_rank(min_grade or "hot")
+    filtered = []
+    for row in rows:
+        if lead_grade_rank(str(row.get("grade") or "")) < minimum:
+            continue
+        if require_draft and not str(row.get("outreach_channel") or "").strip():
+            continue
+        enriched = dict(row)
+        enriched["track"] = lead_track(str(row.get("grade") or ""))
+        enriched["has_outreach_draft"] = "yes" if str(row.get("outreach_channel") or "").strip() else "no"
+        filtered.append(enriched)
+    filtered.sort(key=lambda item: (lead_grade_rank(str(item.get("grade") or "")), float(item.get("score") or 0)), reverse=True)
+    return filtered
+
+
+def build_batch_crm_export(rows: list[dict[str, Any]], *, owner: str, format: str, min_grade: str, require_draft: bool) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get("track") or "unassigned"), []).append(row)
+    tracks = [{"track": track, "leadCount": len(group_rows), "rows": group_rows} for track, group_rows in grouped.items()]
+    track_counts = {track["track"]: track["leadCount"] for track in tracks}
+    return {
+        "type": "crm-export-batch",
+        "format": format,
+        "owner": owner,
+        "minGrade": min_grade,
+        "requireDraft": require_draft,
+        "leadCount": len(rows),
+        "trackCounts": track_counts,
+        "tracks": tracks,
+        "rows": rows,
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def crm_rows_to_csv(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return ""
     output = StringIO()
     fieldnames = list(rows[0].keys())
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(rows)
     return output.getvalue().rstrip()
+
+
+def load_leads_csv(csv_path: Path, *, fallback_source: str, fallback_channel: str, limit: int) -> list[dict[str, str]]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows: list[dict[str, str]] = []
+        for raw in reader:
+            normalized = normalize_imported_lead_row(raw, fallback_source=fallback_source, fallback_channel=fallback_channel)
+            if normalized:
+                rows.append(normalized)
+            if limit and len(rows) >= limit:
+                break
+    return rows
+
+
+def normalize_imported_lead_row(raw: dict[str, Any], *, fallback_source: str, fallback_channel: str) -> dict[str, str] | None:
+    row = {normalize_imported_lead_key(key): str(value or "").strip() for key, value in raw.items()}
+    name = first_nonempty(row, "name", "lead", "contact", "contact_name", "full_name")
+    company = first_nonempty(row, "company", "organization", "organization_name", "account")
+    role = first_nonempty(row, "role", "title", "job_title")
+    source = first_nonempty(row, "source") or fallback_source.strip()
+    channel = first_nonempty(row, "channel") or fallback_channel.strip()
+    url = first_nonempty(row, "url", "website", "website_url", "profile_url", "linkedin_url")
+    text = first_nonempty(row, "text", "notes", "lead_notes", "description", "bio", "signal", "message")
+    if not text:
+        return None
+    if not name:
+        name = company or "Unknown lead"
+    return {
+        "name": name,
+        "company": company,
+        "role": role,
+        "source": source,
+        "channel": channel,
+        "url": url,
+        "text": text,
+    }
+
+
+def first_nonempty(row: dict[str, str], *keys: str) -> str:
+    for key in keys:
+        value = str(row.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def normalize_imported_lead_key(key: Any) -> str:
+    return slugify(str(key).strip(), fallback="field").replace("-", "_")
+
+
+def build_lead_import(csv_path: Path, rows: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "type": "lead-import",
+        "sourceFile": str(csv_path),
+        "rowCount": len(rows),
+        "rows": rows,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_prospect_list(*, strategy: dict[str, Any], name: str, description: str) -> dict[str, Any]:
+    slug = slugify(name, fallback='prospect-list')
+    return {
+        'type': 'prospect-list',
+        'id': slug,
+        'slug': slug,
+        'name': name.strip(),
+        'brand': str(strategy.get('brand') or ''),
+        'description': description.strip(),
+        'approvalStatus': 'review',
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def select_prospect_list(state: dict[str, Any], list_id: str) -> dict[str, Any] | None:
+    lists = [item for item in state.get('prospectLists', []) if isinstance(item, dict)]
+    wanted = str(list_id or '').strip().lower()
+    if wanted:
+        for item in lists:
+            if str(item.get('id') or '').lower() == wanted or str(item.get('slug') or '').lower() == wanted or str(item.get('name') or '').strip().lower() == wanted:
+                return item
+        return None
+    latest = state.get('lastProspectList')
+    return latest if isinstance(latest, dict) else (lists[-1] if lists else None)
+
+
+def load_prospects_csv(csv_path: Path, *, fallback_source: str, fallback_channel: str, limit: int) -> list[dict[str, str]]:
+    with csv_path.open('r', encoding='utf-8-sig', newline='') as handle:
+        reader = csv.DictReader(handle)
+        rows: list[dict[str, str]] = []
+        for raw in reader:
+            normalized = normalize_prospect_row(raw, fallback_source=fallback_source, fallback_channel=fallback_channel)
+            if normalized:
+                rows.append(normalized)
+            if limit and len(rows) >= limit:
+                break
+    return rows
+
+
+def load_prospects_json(json_path: Path, *, fallback_source: str, fallback_channel: str, limit: int) -> list[dict[str, str]]:
+    payload = json.loads(json_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for raw in payload:
+        if not isinstance(raw, dict):
+            continue
+        normalized = normalize_prospect_row(raw, fallback_source=fallback_source, fallback_channel=fallback_channel)
+        if normalized:
+            rows.append(normalized)
+        if limit and len(rows) >= limit:
+            break
+    return rows
+
+
+def normalize_prospect_row(raw: dict[str, Any], *, fallback_source: str, fallback_channel: str) -> dict[str, str] | None:
+    row = {normalize_imported_lead_key(key): str(value or '').strip() for key, value in raw.items()}
+    name = first_nonempty(row, 'name', 'full_name', 'contact_name', 'contact', 'lead')
+    company = first_nonempty(row, 'company', 'company_name', 'organization', 'organization_name', 'organization_name', 'account')
+    role = first_nonempty(row, 'role', 'title', 'job_title')
+    url = first_nonempty(row, 'url', 'website', 'website_url', 'profile_url', 'linkedin_url')
+    text = first_nonempty(row, 'text', 'notes', 'lead_notes', 'description', 'bio', 'message')
+    source = first_nonempty(row, 'source') or fallback_source.strip()
+    channel = first_nonempty(row, 'channel') or fallback_channel.strip()
+    location = first_nonempty(row, 'location', 'city', 'region')
+    if not any((name, company, url, text)):
+        return None
+    if not name:
+        name = company or 'Unknown prospect'
+    return {
+        'name': name,
+        'company': company,
+        'role': role,
+        'source': source,
+        'channel': channel,
+        'url': url,
+        'text': text,
+        'location': location,
+    }
+
+
+def build_prospect_import(*, prospect_list: dict[str, Any], source_path: Path, rows: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        'type': 'prospect-import',
+        'listId': prospect_list['id'],
+        'listSlug': prospect_list['slug'],
+        'sourceFile': str(source_path),
+        'rowCount': len(rows),
+        'rows': rows,
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def prospect_rows_for_list(state: dict[str, Any], list_id: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in state.get('prospectImports', []):
+        if isinstance(item, dict) and str(item.get('listId') or '') == list_id:
+            rows.extend(row for row in item.get('rows', []) if isinstance(row, dict))
+    return rows
+
+
+def prospect_identity_key(row: dict[str, str]) -> str:
+    url = normalize_url(str(row.get('url') or ''))
+    if url:
+        return url
+    raw_company = str(row.get('company') or '').strip()
+    raw_name = str(row.get('name') or '').strip()
+    company = slugify(raw_company, fallback='') if raw_company else ''
+    name = '' if raw_name.lower() == 'unknown prospect' else slugify(raw_name, fallback='')
+    if company or name:
+        return f'{company or "company"}:{name or "name"}'
+    text = slugify(str(row.get('text') or ''), fallback='text')
+    location = slugify(str(row.get('location') or ''), fallback='location')
+    source = slugify(str(row.get('source') or ''), fallback='source')
+    channel = slugify(str(row.get('channel') or ''), fallback='channel')
+    return f'{text}:{location}:{source}:{channel}'
+
+
+def normalize_url(url: str) -> str:
+    value = str(url or '').strip().lower()
+    return value.rstrip('/')
+
+
+def prospect_row_richness(row: dict[str, str]) -> tuple[int, int]:
+    filled = sum(1 for key in ('name', 'company', 'role', 'source', 'channel', 'url', 'text', 'location') if str(row.get(key) or '').strip())
+    text_len = len(str(row.get('text') or '').strip())
+    return (filled, text_len)
+
+
+def build_prospect_dedupe_report(*, prospect_list: dict[str, Any], rows: list[dict[str, str]]) -> dict[str, Any]:
+    kept: dict[str, dict[str, str]] = {}
+    removed: list[dict[str, str]] = []
+    for row in rows:
+        key = prospect_identity_key(row)
+        existing = kept.get(key)
+        if existing is None or prospect_row_richness(row) > prospect_row_richness(existing):
+            if existing is not None:
+                removed.append(existing)
+            kept[key] = row
+        else:
+            removed.append(row)
+    kept_rows = list(kept.values())
+    return {
+        'type': 'prospect-dedupe',
+        'listId': prospect_list['id'],
+        'listSlug': prospect_list['slug'],
+        'keptCount': len(kept_rows),
+        'removedCount': len(removed),
+        'rows': kept_rows,
+        'removedRows': removed,
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def latest_prospect_dedupe(state: dict[str, Any], list_id: str) -> dict[str, Any] | None:
+    matches = [item for item in state.get('prospectDedupes', []) if isinstance(item, dict) and str(item.get('listId') or '') == list_id]
+    return matches[-1] if matches else None
+
+
+def build_prospect_enrichment(*, prospect_list: dict[str, Any], rows: list[dict[str, str]]) -> dict[str, Any]:
+    enriched = [enrich_prospect_row(row) for row in rows]
+    return {
+        'type': 'prospect-enrichment',
+        'listId': prospect_list['id'],
+        'listSlug': prospect_list['slug'],
+        'rowCount': len(enriched),
+        'rows': enriched,
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def latest_prospect_enrichment(state: dict[str, Any], list_id: str) -> dict[str, Any] | None:
+    matches = [item for item in state.get('prospectEnrichments', []) if isinstance(item, dict) and str(item.get('listId') or '') == list_id]
+    return matches[-1] if matches else None
+
+
+def enrich_prospect_row(row: dict[str, str]) -> dict[str, str]:
+    enriched = dict(row)
+    industry = infer_industry(row)
+    if industry:
+        enriched['industry'] = industry
+    enriched['status'] = 'enriched'
+    if not str(enriched.get('text') or '').strip():
+        enriched['text'] = synthesized_prospect_text(enriched)
+    return enriched
+
+
+def infer_industry(row: dict[str, str]) -> str:
+    haystack = ' '.join(str(row.get(key) or '') for key in ('company', 'role', 'text', 'location')).lower()
+    keyword_map = {
+        'Dental': ['dental', 'dentist', 'orthodont'],
+        'Education': ['academy', 'school', 'curriculum', 'student', 'training'],
+        'Healthcare': ['clinic', 'medical', 'patient'],
+        'Manufacturing': ['factory', 'manufacturing', 'supplier'],
+    }
+    for label, keywords in keyword_map.items():
+        if any(word in haystack for word in keywords):
+            return label
+    return 'General SMB'
+
+
+def synthesized_prospect_text(row: dict[str, str]) -> str:
+    parts = [str(row.get('company') or row.get('name') or 'Prospect').strip()]
+    if str(row.get('industry') or '').strip():
+        parts.append(f"in {row['industry']}")
+    if str(row.get('location') or '').strip():
+        parts.append(f"based in {row['location']}")
+    parts.append('prospect for outbound review and scoring.')
+    return ' '.join(part for part in parts if part)
+
+
+def build_prospect_export(*, prospect_list: dict[str, Any], rows: list[dict[str, str]]) -> dict[str, Any]:
+    export_rows = []
+    for row in rows:
+        export_rows.append({
+            'name': str(row.get('name') or ''),
+            'company': str(row.get('company') or ''),
+            'role': str(row.get('role') or ''),
+            'source': str(row.get('source') or ''),
+            'channel': str(row.get('channel') or ''),
+            'url': str(row.get('url') or ''),
+            'text': str(row.get('text') or synthesized_prospect_text(row)),
+            'location': str(row.get('location') or ''),
+            'industry': str(row.get('industry') or ''),
+            'status': str(row.get('status') or ''),
+        })
+    return {
+        'type': 'prospect-export',
+        'listId': prospect_list['id'],
+        'listSlug': prospect_list['slug'],
+        'rowCount': len(export_rows),
+        'rows': export_rows,
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def prospect_rows_to_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = StringIO()
+    fieldnames = ['name', 'company', 'role', 'source', 'channel', 'url', 'text', 'location', 'industry', 'status']
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, '') for key in fieldnames})
+    return buffer.getvalue()
 
 
 def unique_list(items: list[str]) -> list[str]:
@@ -2371,6 +3245,109 @@ def build_approval_package(
     }
 
 
+
+def build_batch_action_approval_package(
+    state: dict[str, Any],
+    *,
+    drafts: list[dict[str, Any]],
+    crm_rows: list[dict[str, Any]],
+    owner: str,
+) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    campaign = state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}
+    queue: list[dict[str, Any]] = []
+    channels: list[str] = []
+    for draft in drafts:
+        channel = str(draft.get("channel") or "email")
+        channels.append(channel)
+        queue.append(
+            {
+                "id": draft.get("id", ""),
+                "source": "outreach-draft",
+                "channel": channel,
+                "title": draft.get("subject", ""),
+                "action": "send approved outreach",
+                "status": "approved",
+                "leadId": draft.get("leadId", ""),
+            }
+        )
+    if crm_rows:
+        channels.append("CRM")
+    for row in crm_rows:
+        queue.append(
+            {
+                "id": f"crm-{row.get('lead_id', '')}",
+                "source": "crm-export-row",
+                "channel": "CRM",
+                "title": f"{row.get('company') or row.get('name') or row.get('lead_id')}: {row.get('track', '')}",
+                "action": "import approved CRM row",
+                "status": "approved",
+                "leadId": row.get("lead_id", ""),
+            }
+        )
+    active_channels = unique_list(channels) or ["CRM"]
+    package_id = slugify(
+        f"lead-batch-approval-{campaign.get('slug') or strategy.get('brand') or 'marketing'}-{datetime.now(timezone.utc).isoformat()}",
+        fallback="lead-batch-approval",
+    )
+    risk_review = build_execution_risk_review(queue)
+    if crm_rows:
+        risk_review.append("Confirm approved CRM rows are imported into the correct owner and track before live import.")
+    return {
+        "type": "approval-package",
+        "id": package_id,
+        "brand": strategy.get("brand", ""),
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "scope": "lead batch send/import",
+        "owner": owner,
+        "due": "",
+        "channels": active_channels,
+        "publishingQueue": queue,
+        "executionChecklists": build_execution_checklists(active_channels),
+        "riskReview": unique_list(risk_review),
+        "approvalStatus": "approved",
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
+def approved_outreach_drafts(drafts: list[dict[str, Any]], *, package_id: str, decision_id: str) -> list[dict[str, Any]]:
+    approved = []
+    for draft in drafts:
+        updated = dict(draft)
+        updated["approvalStatus"] = "approved"
+        updated["approvalPackageId"] = package_id
+        updated["approvalDecisionId"] = decision_id
+        updated["approvedAt"] = datetime.now(timezone.utc).isoformat()
+        approved.append(updated)
+    return approved
+
+
+
+def approved_crm_rows(rows: list[dict[str, Any]], *, package_id: str, decision_id: str) -> list[dict[str, Any]]:
+    approved = []
+    for row in rows:
+        updated = dict(row)
+        updated["approval_status"] = "approved"
+        updated["approval_package_id"] = package_id
+        updated["approval_decision_id"] = decision_id
+        approved.append(updated)
+    return approved
+
+
+
+def replace_outreach_drafts(existing: list[dict[str, Any]], approved: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {str(item.get("id") or ""): item for item in approved}
+    output = []
+    for draft in existing:
+        key = str(draft.get("id") or "")
+        output.append(by_id.get(key, draft))
+    return output
+
+
+
 def build_publishing_queue(state: dict[str, Any], channels: list[str], *, scope: str) -> list[dict[str, Any]]:
     queue: list[dict[str, Any]] = []
     drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
@@ -2525,6 +3502,8 @@ def build_integration_handoff(
 
 def item_matches_platform(item: dict[str, Any], platform: str) -> bool:
     text = f"{item.get('source', '')} {item.get('channel', '')}".lower()
+    source = str(item.get("source", "")).lower()
+    channel = str(item.get("channel", "")).lower()
     if platform == "social":
         return any(word in text for word in ("linkedin", "x", "twitter", "youtube", "instagram", "tiktok", "facebook", "discord", "reddit"))
     if platform == "email":
@@ -2532,7 +3511,7 @@ def item_matches_platform(item: dict[str, Any], platform: str) -> bool:
     if platform in {"website", "wordpress"}:
         return any(word in text for word in ("seo", "blog", "website", "wordpress"))
     if platform == "crm":
-        return "outreach" in text or "lead" in text
+        return source == "crm-export-row" or channel == "crm"
     return True
 
 
@@ -3308,21 +4287,93 @@ def derive_budget_metrics(metrics: dict[str, float]) -> dict[str, float]:
     return derived
 
 
+def parse_period_value(period: str) -> dict[str, Any]:
+    value = str(period or "").strip().upper()
+    if not value:
+        return {"kind": "all", "raw": ""}
+    if re.fullmatch(r"\d{4}", value):
+        return {"kind": "year", "raw": value, "year": int(value)}
+    match = re.fullmatch(r"(\d{4})-Q([1-4])", value)
+    if match:
+        return {"kind": "quarter", "raw": value, "year": int(match.group(1)), "quarter": int(match.group(2))}
+    match = re.fullmatch(r"(\d{4})-W(\d{1,2})", value)
+    if match:
+        iso_year = int(match.group(1))
+        week = int(match.group(2))
+        payload: dict[str, Any] = {"kind": "week", "raw": value, "year": iso_year, "isoYear": iso_year, "week": week}
+        if 1 <= week <= 53:
+            try:
+                iso_date = datetime.fromisocalendar(iso_year, week, 1)
+            except ValueError:
+                return payload
+            payload["year"] = iso_date.year
+            payload["month"] = iso_date.month
+            payload["quarter"] = ((iso_date.month - 1) // 3) + 1
+        return payload
+    match = re.fullmatch(r"(\d{4})-(\d{2})", value)
+    if match:
+        month = int(match.group(2))
+        if 1 <= month <= 12:
+            return {
+                "kind": "month",
+                "raw": value,
+                "year": int(match.group(1)),
+                "month": month,
+                "quarter": ((month - 1) // 3) + 1,
+            }
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        try:
+            parsed = datetime(year, month, day)
+        except ValueError:
+            return {"kind": "raw", "raw": value}
+        return {
+            "kind": "date",
+            "raw": value,
+            "year": parsed.year,
+            "month": parsed.month,
+            "quarter": ((parsed.month - 1) // 3) + 1,
+        }
+    return {"kind": "raw", "raw": value}
+
+
+def period_matches(requested_period: str, candidate_period: str) -> bool:
+    requested = parse_period_value(requested_period)
+    candidate = parse_period_value(candidate_period)
+    if requested["kind"] == "all" or not requested.get("raw"):
+        return True
+    if requested.get("raw") == candidate.get("raw"):
+        return True
+    if requested["kind"] == "year":
+        return requested.get("year") == candidate.get("year")
+    if requested["kind"] == "quarter":
+        return requested.get("year") == candidate.get("year") and requested.get("quarter") == candidate.get("quarter")
+    if requested["kind"] == "month":
+        return requested.get("year") == candidate.get("year") and requested.get("month") == candidate.get("month")
+    return False
+
+
 def build_budget_report(state: dict[str, Any], *, plan: dict[str, Any], period: str) -> dict[str, Any]:
+    target_period = str(period or plan.get("period") or "").strip()
     snapshots = [
         item
         for item in state.get("spendSnapshots", [])
-        if isinstance(item, dict) and item.get("planId") == plan.get("id")
+        if isinstance(item, dict)
+        and item.get("planId") == plan.get("id")
+        and period_matches(target_period, str(item.get("period") or plan.get("period") or ""))
     ]
     totals = aggregate_budget_snapshots(snapshots)
     by_channel = aggregate_budget_by_channel(snapshots)
     return {
         "type": "budget-report",
-        "id": slugify(f"budget-report-{plan.get('id', '')}-{period}", fallback="budget-report"),
+        "id": slugify(f"budget-report-{plan.get('id', '')}-{target_period}", fallback="budget-report"),
         "planId": plan.get("id", ""),
         "brand": plan.get("brand", ""),
         "campaign": plan.get("campaign", ""),
-        "period": period or plan.get("period", "latest period"),
+        "period": target_period or plan.get("period", "latest period"),
         "totalBudget": plan.get("totalBudget", 0.0),
         "totalSpend": totals["metrics"].get("spend", 0.0),
         "remainingBudget": round(float(plan.get("totalBudget", 0.0) or 0.0) - totals["metrics"].get("spend", 0.0), 2),
@@ -3378,12 +4429,17 @@ def budget_recommendations(plan: dict[str, Any], totals: dict[str, Any], by_chan
 
 def build_portfolio_budget_review(workspace: dict[str, Any], *, period: str) -> dict[str, Any]:
     brand_states = load_registered_brand_states(workspace)
+    target_period = str(period or "").strip()
     rows = []
     for item in brand_states:
         brand = item.get("brand", {}) if isinstance(item.get("brand"), dict) else {}
         state = item.get("state", {}) if isinstance(item.get("state"), dict) else {}
         reports = [report for report in state.get("budgetReports", []) if isinstance(report, dict)]
-        latest = reports[-1] if reports else {}
+        matching_reports = [
+            report for report in reports if period_matches(target_period, str(report.get("period") or ""))
+        ]
+        relevant_reports = matching_reports if target_period else reports
+        latest = relevant_reports[-1] if relevant_reports else {}
         rows.append(
             {
                 "brandId": brand.get("id", ""),
@@ -3391,7 +4447,7 @@ def build_portfolio_budget_review(workspace: dict[str, Any], *, period: str) -> 
                 "projectDir": brand.get("projectDir", ""),
                 "budgetPlanCount": len(state.get("budgetPlans", [])),
                 "spendSnapshotCount": len(state.get("spendSnapshots", [])),
-                "reportCount": len(reports),
+                "reportCount": len(relevant_reports),
                 "latestReport": latest,
                 "totalBudget": float(latest.get("totalBudget", 0.0) or 0.0),
                 "totalSpend": float(latest.get("totalSpend", 0.0) or 0.0),
@@ -3402,7 +4458,7 @@ def build_portfolio_budget_review(workspace: dict[str, Any], *, period: str) -> 
     total_spend = sum(row["totalSpend"] for row in rows)
     return {
         "type": "portfolio-budget-review",
-        "period": period or "latest period",
+        "period": target_period or "latest period",
         "brandCount": len(rows),
         "totalBudget": round(total_budget, 2),
         "totalSpend": round(total_spend, 2),
@@ -3605,11 +4661,59 @@ def record_blog_briefs(project_dir: Path, briefs: dict[str, Any]) -> None:
     write_state(project_dir, state)
 
 
+def record_prospect_list(project_dir: Path, prospect_list: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state['prospectLists'] = upsert_by_id([item for item in state.get('prospectLists', []) if isinstance(item, dict)], prospect_list)
+    state['lastProspectList'] = prospect_list
+    state['workflowState'] = 'prospect_list_ready'
+    write_state(project_dir, state)
+
+
+def record_prospect_import(project_dir: Path, prospect_import: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault('prospectImports', []).append(prospect_import)
+    state['lastProspectImport'] = prospect_import
+    state['workflowState'] = 'prospect_import_ready'
+    write_state(project_dir, state)
+
+
+def record_prospect_dedupe(project_dir: Path, dedupe_report: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault('prospectDedupes', []).append(dedupe_report)
+    state['lastProspectDedupe'] = dedupe_report
+    state['workflowState'] = 'prospect_deduped'
+    write_state(project_dir, state)
+
+
+def record_prospect_enrichment(project_dir: Path, enrichment: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault('prospectEnrichments', []).append(enrichment)
+    state['lastProspectEnrichment'] = enrichment
+    state['workflowState'] = 'prospect_enriched'
+    write_state(project_dir, state)
+
+
+def record_prospect_export(project_dir: Path, export: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault('prospectExports', []).append(export)
+    state['lastProspectExport'] = export
+    state['workflowState'] = 'prospect_export_ready'
+    write_state(project_dir, state)
+
+
 def record_lead_signals(project_dir: Path, lead_signals: dict[str, Any]) -> None:
     state = read_state(project_dir / STATE_PATH)
     state.setdefault("leadSignals", []).append(lead_signals)
     state["lastLeadSignals"] = lead_signals
     state["workflowState"] = "lead_signals_ready"
+    write_state(project_dir, state)
+
+
+def record_lead_import(project_dir: Path, lead_import: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("leadImports", []).append(lead_import)
+    state["lastLeadImport"] = lead_import
+    state["workflowState"] = "lead_import_ready"
     write_state(project_dir, state)
 
 
@@ -3621,11 +4725,29 @@ def record_lead_scorecard(project_dir: Path, scorecard: dict[str, Any]) -> None:
     write_state(project_dir, state)
 
 
+def record_lead_scorecards(project_dir: Path, scorecards: list[dict[str, Any]]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("leadScorecards", []).extend(scorecards)
+    if scorecards:
+        state["lastLeadScorecard"] = scorecards[-1]
+        state["workflowState"] = "lead_scored"
+    write_state(project_dir, state)
+
+
 def record_outreach_draft(project_dir: Path, draft: dict[str, Any]) -> None:
     state = read_state(project_dir / STATE_PATH)
     state.setdefault("outreachDrafts", []).append(draft)
     state["lastOutreachDraft"] = draft
     state["workflowState"] = "outreach_draft_ready"
+    write_state(project_dir, state)
+
+
+def record_outreach_drafts(project_dir: Path, drafts: list[dict[str, Any]]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("outreachDrafts", []).extend(drafts)
+    if drafts:
+        state["lastOutreachDraft"] = drafts[-1]
+        state["workflowState"] = "outreach_draft_ready"
     write_state(project_dir, state)
 
 
@@ -4425,14 +5547,12 @@ def render_blog_briefs_markdown(briefs: dict[str, Any]) -> str:
 
 def render_lead_signals_markdown(lead_signals: dict[str, Any]) -> str:
     lines = [
-        f"# Lead Signals: {lead_signals.get('brand', 'Marketing Project')}",
+        f"# Lead Signals: {lead_signals.get('brand', 'Brand')}",
         "",
         f"- Audience: {lead_signals.get('audience', '')}",
         f"- Offer: {lead_signals.get('offer', '')}",
-        "- Approval: required before outreach or CRM writes",
-        "",
-        "## Channels to Monitor",
-        *[f"- {channel}" for channel in lead_signals.get("channels", [])],
+        f"- Channels: {', '.join(lead_signals.get('channels', []))}",
+        f"- Approval required: {'yes' if lead_signals.get('approvalRequired') else 'no'}",
         "",
         "## Positive Signals",
         *[f"- {signal}" for signal in lead_signals.get("positiveSignals", [])],
@@ -4449,6 +5569,124 @@ def render_lead_signals_markdown(lead_signals: dict[str, Any]) -> str:
         "## Scoring Rules",
         *[f"- {rule}" for rule in lead_signals.get("scoringRules", [])],
     ]
+    return "\n".join(lines)
+
+
+def render_prospect_list_markdown(prospect_list: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"# Prospect List: {prospect_list.get('name', '')}",
+            "",
+            f"- Brand: {prospect_list.get('brand', '')}",
+            f"- Slug: {prospect_list.get('slug', '')}",
+            f"- Status: {prospect_list.get('approvalStatus', '')}",
+            "",
+            "## Description",
+            str(prospect_list.get('description', '')),
+        ]
+    )
+
+
+def render_prospect_import_markdown(prospect_import: dict[str, Any]) -> str:
+    lines = [
+        "# Prospect Import",
+        "",
+        f"- List: {prospect_import.get('listSlug', '')}",
+        f"- Source file: {prospect_import.get('sourceFile', '')}",
+        f"- Row count: {prospect_import.get('rowCount', 0)}",
+        "",
+    ]
+    for row in prospect_import.get('rows', []):
+        lines.extend(
+            [
+                f"## {row.get('company') or row.get('name') or 'Prospect'}",
+                "",
+                f"- Name: {row.get('name', '')}",
+                f"- Role: {row.get('role', '')}",
+                f"- Location: {row.get('location', '')}",
+                f"- URL: {row.get('url', '')}",
+                f"- Notes: {row.get('text', '')}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_prospect_dedupe_markdown(dedupe_report: dict[str, Any]) -> str:
+    lines = [
+        "# Prospect Dedupe Report",
+        "",
+        f"- List: {dedupe_report.get('listSlug', '')}",
+        f"- Kept: {dedupe_report.get('keptCount', 0)}",
+        f"- Removed: {dedupe_report.get('removedCount', 0)}",
+        "",
+    ]
+    for row in dedupe_report.get('rows', []):
+        lines.append(f"- Keep {row.get('company') or row.get('name')}: {row.get('url', '') or row.get('text', '')}")
+    return "\n".join(lines)
+
+
+def render_prospect_enrichment_markdown(enrichment: dict[str, Any]) -> str:
+    lines = [
+        "# Prospect Enrichment",
+        "",
+        f"- List: {enrichment.get('listSlug', '')}",
+        f"- Row count: {enrichment.get('rowCount', 0)}",
+        "",
+    ]
+    for row in enrichment.get('rows', []):
+        lines.extend(
+            [
+                f"## {row.get('company') or row.get('name')}",
+                "",
+                f"- Industry: {row.get('industry', '')}",
+                f"- Status: {row.get('status', '')}",
+                f"- Channel: {row.get('channel', '')}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_prospect_export_markdown(export: dict[str, Any]) -> str:
+    lines = [
+        "# Prospect Export for Scoring",
+        "",
+        f"- List: {export.get('listSlug', '')}",
+        f"- Row count: {export.get('rowCount', 0)}",
+        "",
+    ]
+    for row in export.get('rows', []):
+        lines.append(f"- {row.get('company') or row.get('name')}: {row.get('text', '')}")
+    return "\n".join(lines)
+
+
+def render_imported_leads_markdown(lead_import: dict[str, Any]) -> str:
+    rows = lead_import.get("rows", []) if isinstance(lead_import.get("rows"), list) else []
+    lines = [
+        "# Imported Leads",
+        "",
+        f"- Source file: {lead_import.get('sourceFile', '')}",
+        f"- Row count: {lead_import.get('rowCount', 0)}",
+        f"- Imported at: {lead_import.get('createdAt', '')}",
+        "",
+    ]
+    for row in rows:
+        lines.extend(
+            [
+                f"## {row.get('company') or row.get('name') or 'Imported lead'}",
+                "",
+                f"- Name: {row.get('name', '')}",
+                f"- Role: {row.get('role', '')}",
+                f"- Source: {row.get('source', '')}",
+                f"- Channel: {row.get('channel', '')}",
+                f"- URL: {row.get('url', '')}",
+                "",
+                "### Lead Text",
+                str(row.get("text", "")),
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -4484,13 +5722,20 @@ def render_scorecards_markdown(scorecards: list[dict[str, Any]]) -> str:
 
 
 def render_outreach_markdown(drafts: list[dict[str, Any]]) -> str:
-    lines = ["# Outreach Drafts", "", "- Status: draft only", "- Approval: required before sending", ""]
+    lines = [
+        "# Outreach Drafts",
+        "",
+        "- Status: review artifact unless a draft is explicitly approved.",
+        "- Approval: required before sending.",
+        "",
+    ]
     for draft in drafts:
         lines.extend(
             [
                 f"## {draft.get('channel', '')}: {draft.get('leadId', '')}",
                 "",
                 f"- Draft ID: {draft.get('id', '')}",
+                f"- Status: {draft.get('approvalStatus', '')}",
                 f"- Tone: {draft.get('tone', '')}",
                 f"- Subject: {draft.get('subject', '')}",
                 "",
@@ -4502,6 +5747,34 @@ def render_outreach_markdown(drafts: list[dict[str, Any]]) -> str:
         )
         for step in draft.get("followUpSchedule", []):
             lines.append(f"- Day {step.get('dayOffset', 0)}: {step.get('action', '')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_batch_crm_export_markdown(export: dict[str, Any]) -> str:
+    lines = [
+        "# Batch CRM Export",
+        "",
+        f"- Owner: {export.get('owner', '')}",
+        f"- Format: {export.get('format', '')}",
+        f"- Minimum grade: {export.get('minGrade', '')}",
+        f"- Require draft: {'yes' if export.get('requireDraft') else 'no'}",
+        f"- Lead count: {export.get('leadCount', 0)}",
+        "",
+    ]
+    for track in export.get("tracks", []):
+        lines.extend(
+            [
+                f"## {track.get('track', '')}",
+                "",
+                f"- Lead count: {track.get('leadCount', 0)}",
+                "",
+            ]
+        )
+        for row in track.get("rows", []):
+            lines.append(
+                f"- {row.get('company') or row.get('name')}: grade {row.get('grade', '')}, score {row.get('score', 0)}, outreach {row.get('outreach_channel', '') or 'none'}"
+            )
         lines.append("")
     return "\n".join(lines)
 
@@ -5302,6 +6575,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     briefs.set_defaults(func=generate_blog_briefs)
 
+    prospect_list = subparsers.add_parser("create-prospect-list", help="Create a reviewable outbound prospect list scaffold.")
+    prospect_list.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    prospect_list.add_argument("--name", required=True, help="Prospect list name.")
+    prospect_list.add_argument("--description", default="", help="Prospect list description and sourcing notes.")
+    prospect_list.set_defaults(func=create_prospect_list)
+
+    import_prospect_parser = subparsers.add_parser("import-prospects", help="Import outbound prospects from CSV or JSON into a named list.")
+    import_prospect_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    import_prospect_parser.add_argument("--list-id", default="", help="Prospect list ID or slug. Defaults to latest list.")
+    import_prospect_parser.add_argument("--csv", default="", help="Path to a CSV file with prospect rows.")
+    import_prospect_parser.add_argument("--json-path", default="", help="Path to a JSON array with prospect rows.")
+    import_prospect_parser.add_argument("--source", default="", help="Fallback source label.")
+    import_prospect_parser.add_argument("--channel", default="", help="Fallback channel label.")
+    import_prospect_parser.add_argument("--limit", type=int, default=0, help="Optional max number of rows to import.")
+    import_prospect_parser.set_defaults(func=import_prospects)
+
+    dedupe_prospect_parser = subparsers.add_parser("dedupe-prospects", help="Deduplicate imported prospects for one list.")
+    dedupe_prospect_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    dedupe_prospect_parser.add_argument("--list-id", default="", help="Prospect list ID or slug. Defaults to latest list.")
+    dedupe_prospect_parser.set_defaults(func=dedupe_prospects)
+
+    enrich_prospect_parser = subparsers.add_parser("enrich-prospects", help="Add deterministic enrichment fields to a deduped prospect list.")
+    enrich_prospect_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    enrich_prospect_parser.add_argument("--list-id", default="", help="Prospect list ID or slug. Defaults to latest list.")
+    enrich_prospect_parser.set_defaults(func=enrich_prospects)
+
+    export_prospect_parser = subparsers.add_parser("export-prospects-for-scoring", help="Export enriched prospects into a scoring-ready CSV.")
+    export_prospect_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    export_prospect_parser.add_argument("--list-id", default="", help="Prospect list ID or slug. Defaults to latest list.")
+    export_prospect_parser.set_defaults(func=export_prospects_for_scoring)
+
     signals = subparsers.add_parser("define-lead-signals", help="Define reviewable lead detection signals from strategy.")
     signals.add_argument("--project-dir", default=".", help="Marketing project directory.")
     signals.add_argument("--signals", default="", help="Comma-separated custom positive lead signals.")
@@ -5320,6 +6624,14 @@ def build_parser() -> argparse.ArgumentParser:
     lead.add_argument("--channel", default="", help="Source channel.")
     lead.set_defaults(func=score_lead)
 
+    batch_leads = subparsers.add_parser("batch-score-leads", help="Import leads from CSV and score them in one reviewable batch.")
+    batch_leads.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    batch_leads.add_argument("--csv", required=True, help="Path to a CSV file with lead rows.")
+    batch_leads.add_argument("--source", default="", help="Fallback source for rows missing a source column.")
+    batch_leads.add_argument("--channel", default="", help="Fallback channel for rows missing a channel column.")
+    batch_leads.add_argument("--limit", type=int, default=0, help="Optional max number of rows to import and score.")
+    batch_leads.set_defaults(func=batch_score_leads)
+
     outreach = subparsers.add_parser("draft-outreach", help="Draft review-only outreach for a scored lead.")
     outreach.add_argument("--project-dir", default=".", help="Marketing project directory.")
     outreach.add_argument("--lead-id", default="", help="Lead scorecard ID. Defaults to latest scored lead.")
@@ -5328,11 +6640,38 @@ def build_parser() -> argparse.ArgumentParser:
     outreach.add_argument("--cta", default="", help="CTA override.")
     outreach.set_defaults(func=draft_outreach)
 
+    batch_outreach = subparsers.add_parser("batch-draft-outreach", help="Create review-only outreach drafts for scored leads that meet a grade threshold.")
+    batch_outreach.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    batch_outreach.add_argument("--channel", choices=("email", "linkedin", "x", "phone", "crm-note"), default="email", help="Outreach channel for the generated drafts.")
+    batch_outreach.add_argument("--tone", default="", help="Tone override.")
+    batch_outreach.add_argument("--cta", default="", help="CTA override.")
+    batch_outreach.add_argument("--min-grade", choices=("hot", "warm", "nurture"), default="hot", help="Minimum lead grade to include.")
+    batch_outreach.add_argument("--limit", type=int, default=0, help="Optional max number of drafts to create.")
+    batch_outreach.set_defaults(func=batch_draft_outreach)
+
     crm = subparsers.add_parser("crm-export", help="Export scored leads and outreach metadata for CRM review/import.")
     crm.add_argument("--project-dir", default=".", help="Marketing project directory.")
     crm.add_argument("--format", choices=("json", "csv"), default="json", help="Export format.")
     crm.add_argument("--owner", default="", help="Optional lead owner.")
     crm.set_defaults(func=crm_export)
+
+    batch_crm = subparsers.add_parser("batch-crm-export", help="Export scored leads into grouped CRM tracks for review-only batch import.")
+    batch_crm.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    batch_crm.add_argument("--format", choices=("json", "csv"), default="json", help="Export format.")
+    batch_crm.add_argument("--owner", default="", help="Optional lead owner.")
+    batch_crm.add_argument("--min-grade", choices=("hot", "warm", "nurture"), default="hot", help="Minimum lead grade to include.")
+    batch_crm.add_argument("--require-draft", action="store_true", help="Only include leads that already have an outreach draft.")
+    batch_crm.set_defaults(func=batch_crm_export)
+
+    approve_batch = subparsers.add_parser("approve-batch-actions", help="Approve selected outreach drafts and CRM rows, then package them for operator send/import.")
+    approve_batch.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    approve_batch.add_argument("--draft-ids", default="", help="Comma-separated outreach draft IDs to approve.")
+    approve_batch.add_argument("--lead-ids", default="", help="Comma-separated lead IDs for CRM rows. Defaults to lead IDs linked from the selected drafts.")
+    approve_batch.add_argument("--owner", default="", help="Optional lead owner for ready CRM rows.")
+    approve_batch.add_argument("--approver", default="", help="Approver name for the audit trail.")
+    approve_batch.add_argument("--notes", default="", help="Approval notes for the audit trail.")
+    approve_batch.add_argument("--format", choices=("json", "csv"), default="json", help="Ready CRM export format.")
+    approve_batch.set_defaults(func=approve_batch_actions)
 
     performance = subparsers.add_parser("record-performance", help="Record campaign/channel metrics and generate optimization recommendations.")
     performance.add_argument("--project-dir", default=".", help="Marketing project directory.")
